@@ -37,6 +37,7 @@ export const FRAMES: Frame[] = [
 
 export const CATEGORIES: FrameCategory[] = [
   { id: "all", name: "All", frameIds: ["aloe-can", "aloe-pet", "basil", "boba", "coffee", "coffee-can", "fruit-milk", "juice-100", "juice-30", "juice-can", "nata-nature", "nata-sunsmile", "smoothie", "soy"] },
+  { id: "africa", name: "Africa", frameIds: ["fruit-milk", "juice-30", "smoothie", "soy"] },
   { id: "america", name: "America", frameIds: ["aloe-can", "aloe-pet", "juice-100", "smoothie"] },
   { id: "asia", name: "Asia", frameIds: ["coffee", "coffee-can", "juice-100", "nata-nature", "nata-sunsmile"] },
   { id: "australia", name: "Australia", frameIds: ["aloe-can", "aloe-pet", "juice-100", "smoothie"] },
