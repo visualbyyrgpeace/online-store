@@ -107,3 +107,4 @@ body {
   100% { transform: scale(1); }
 }
 .reaction-pop { animation: reaction-pop .32s cubic-bezier(.34, 1.56, .64, 1) backwards; }
+.reaction-tray-btn:hover, .reaction-tray-btn:focus-visible { background-color: color-mix(in srgb, var(--c) 14%, white) !important; }

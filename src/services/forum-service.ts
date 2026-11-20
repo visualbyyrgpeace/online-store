@@ -94,7 +94,7 @@ export async function deleteForumComment(id: string): Promise<void> {
 }
 
 // ---- Thả icon (reaction) ----
-export const REACTION_KEYS = ["like", "love", "haha", "wow", "sad", "angry"] as const;
+export const REACTION_KEYS = ["like", "love", "haha", "wow", "sad", "angry", "fire", "party", "cool", "star", "skull", "watch"] as const;
 export type ReactionKey = (typeof REACTION_KEYS)[number];
 export type ReactionKind = "post" | "comment";
 export type ReactionState = { counts: Partial<Record<ReactionKey, number>>; mine: ReactionKey | null };

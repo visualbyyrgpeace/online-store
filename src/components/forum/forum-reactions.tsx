@@ -12,7 +12,6 @@ import {
 } from "@/services/forum-service";
 
 const EMPTY: ReactionState = { counts: {}, mine: null };
-const INK = "#4a2f0b";
 
 const LABELS: Record<ReactionKey, string> = {
   like: "Thích",
@@ -21,66 +20,132 @@ const LABELS: Record<ReactionKey, string> = {
   wow: "Wow",
   sad: "Buồn",
   angry: "Phẫn nộ",
+  fire: "Cháy",
+  party: "Ăn mừng",
+  cool: "Ngầu",
+  star: "Tuyệt vời",
+  skull: "Xỉu",
+  watch: "Hóng",
 };
 
-/** Mặt icon vẽ phẳng, một bộ màu thống nhất. */
+/** Mỗi icon một màu nét riêng. */
+const COLORS: Record<ReactionKey, string> = {
+  like: "#3b82f6",
+  love: "#ec4899",
+  haha: "#f59e0b",
+  wow: "#14b8a6",
+  sad: "#0ea5e9",
+  angry: "#ef4444",
+  fire: "#f97316",
+  party: "#a855f7",
+  cool: "#6366f1",
+  star: "#eab308",
+  skull: "#64748b",
+  watch: "#22c55e",
+};
+
+const dot = (x: number, y: number) => <circle cx={x} cy={y} r={0.95} fill="currentColor" stroke="none" />;
+
+/** Icon nét mảnh (lưới 24, nét 1.7, đầu nét tròn), cùng kiểu với bộ icon của web. */
+const ICONS: Record<ReactionKey, React.ReactNode> = {
+  like: (
+    <>
+      <path d="M7 10v12" />
+      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
+    </>
+  ),
+  love: <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />,
+  haha: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M18 13a6 6 0 0 1-6 5 6 6 0 0 1-6-5h12Z" />
+      {dot(9, 9)}
+      {dot(15, 9)}
+    </>
+  ),
+  wow: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <ellipse cx="12" cy="16" rx="2" ry="2.6" />
+      <path d="M7.4 7q1.6-1.3 3.2 0M13.4 7q1.6-1.3 3.2 0" />
+      {dot(9, 10.2)}
+      {dot(15, 10.2)}
+    </>
+  ),
+  sad: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M16 16s-1.5-2-4-2-4 2-4 2" />
+      {dot(9, 9)}
+      {dot(15, 9)}
+    </>
+  ),
+  angry: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <path d="M16 16s-1.5-2-4-2-4 2-4 2M7.5 8 10 9M14 9l2.5-1" />
+      {dot(9, 12)}
+      {dot(15, 12)}
+    </>
+  ),
+  fire: <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />,
+  party: (
+    <>
+      <path d="M5.8 11.3 2 22l10.7-3.79" />
+      <path d="M11 13c1.93 1.93 2.83 4.17 2 5-.83.83-3.07-.07-5-2-1.93-1.93-2.83-4.17-2-5 .83-.83 3.07.07 5 2Z" />
+      <path d="m22 2-2.24.75a2.9 2.9 0 0 0-1.96 3.12c.1.86-.57 1.63-1.45 1.63h-.38c-.86 0-1.6.6-1.76 1.44L14 10" />
+      <path d="m22 13-.82-.33c-.86-.34-1.82.2-1.98 1.11-.11.7-.72 1.22-1.43 1.22H17" />
+      <path d="m11 2 .33.82c.34.86-.2 1.82-1.11 1.98C9.52 4.9 9 5.52 9 6.23V7" />
+      <path d="M4 3h.01M22 8h.01M15 2h.01M22 20h.01" />
+    </>
+  ),
+  cool: (
+    <>
+      <circle cx="12" cy="12" r="10" />
+      <rect x="5.4" y="8.6" width="5.6" height="3.8" rx="1.7" />
+      <rect x="13" y="8.6" width="5.6" height="3.8" rx="1.7" />
+      <path d="M11 10.2h2M9 16s1 1.7 3 1.7 3-1.7 3-1.7" />
+    </>
+  ),
+  star: <path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />,
+  skull: (
+    <>
+      <path d="M6.5 15.2V18a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2.8a7.5 7.5 0 1 0-11 0z" />
+      <path d="M10.5 19v2M13.5 19v2" />
+      <circle cx="9.3" cy="12" r="1.2" />
+      <circle cx="14.7" cy="12" r="1.2" />
+    </>
+  ),
+  watch: (
+    <>
+      <path d="M2.5 12C3.5 10.5 7 5.5 12 5.5s8.5 5 9.5 6.5c-1 1.5-4.5 6.5-9.5 6.5S3.5 13.5 2.5 12z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
+};
+
+/** Icon thả (nét line, đúng màu của nó). */
 export function ReactionFace({ kind, size = 24 }: { kind: ReactionKey; size?: number }) {
-  const stroke = { stroke: INK, strokeWidth: 1.9, strokeLinecap: "round", strokeLinejoin: "round", fill: "none" } as const;
   return (
-    <svg viewBox="0 0 32 32" width={size} height={size} aria-hidden="true" className="block shrink-0">
-      {kind === "like" && (
-        <>
-          <circle cx="16" cy="16" r="16" fill="#3b82f6" />
-          <g transform="translate(7.6 7.4) scale(.7)" fill="#fff" stroke="#fff" strokeWidth="1.6" strokeLinejoin="round">
-            <path d="M7 10v12H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2zM7 10l4.2-8a3.1 3.1 0 0 1 3.8 3.9L14 10h5.8a2 2 0 0 1 1.9 2.6l-2.3 8a2 2 0 0 1-1.9 1.4H7z" />
-          </g>
-        </>
-      )}
-      {kind === "love" && (
-        <>
-          <circle cx="16" cy="16" r="16" fill="#ef4444" />
-          <path d="M16 23.4s-6.8-4.1-6.8-8.9A3.9 3.9 0 0 1 16 11.8a3.9 3.9 0 0 1 6.8 2.7c0 4.8-6.8 8.9-6.8 8.9z" fill="#fff" />
-        </>
-      )}
-      {kind === "haha" && (
-        <>
-          <circle cx="16" cy="16" r="16" fill="#fbbf24" />
-          <path d="M8.8 13.4q2-2.8 4 0M19.2 13.4q2-2.8 4 0" {...stroke} />
-          <path d="M8.6 17.4h14.8a7.4 7.4 0 0 1-14.8 0z" fill={INK} />
-          <ellipse cx="16" cy="23" rx="3.4" ry="1.5" fill="#f87171" />
-        </>
-      )}
-      {kind === "wow" && (
-        <>
-          <circle cx="16" cy="16" r="16" fill="#fbbf24" />
-          <path d="M8.2 9.8q2.6-2.2 5.2 0M18.6 9.8q2.6-2.2 5.2 0" {...stroke} strokeWidth={1.6} />
-          <circle cx="11" cy="14.2" r="1.8" fill={INK} />
-          <circle cx="21" cy="14.2" r="1.8" fill={INK} />
-          <ellipse cx="16" cy="22" rx="3" ry="3.8" fill={INK} />
-        </>
-      )}
-      {kind === "sad" && (
-        <>
-          <circle cx="16" cy="16" r="16" fill="#fbbf24" />
-          <path d="M8.4 11.2l4.2-1.8M23.6 11.2l-4.2-1.8" {...stroke} strokeWidth={1.6} />
-          <circle cx="11.2" cy="14.6" r="1.7" fill={INK} />
-          <circle cx="20.8" cy="14.6" r="1.7" fill={INK} />
-          <path d="M11 22.8q5-4.6 10 0" {...stroke} />
-          <path d="M24.4 17.4q1.8 2.5 0 3.6q-1.8-1.1 0-3.6z" fill="#60a5fa" />
-        </>
-      )}
-      {kind === "angry" && (
-        <>
-          <circle cx="16" cy="16" r="16" fill="#f97316" />
-          <path d="M8 11.4l5.4 2.4M24 11.4l-5.4 2.4" {...stroke} strokeWidth={2.1} />
-          <circle cx="11.6" cy="16.6" r="1.6" fill={INK} />
-          <circle cx="20.4" cy="16.6" r="1.6" fill={INK} />
-          <path d="M10.6 23.6q5.4-4 10.8 0" {...stroke} />
-        </>
-      )}
+    <svg
+      viewBox="0 0 24 24"
+      width={size}
+      height={size}
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+      style={{ color: COLORS[kind] }}
+      className="block shrink-0"
+    >
+      {ICONS[kind]}
     </svg>
   );
 }
+
+const tint = (kind: ReactionKey, percent = 14) => `color-mix(in srgb, ${COLORS[kind]} ${percent}%, white)`;
 
 function SmilePlusIcon({ className = "h-5 w-5" }: { className?: string }) {
   return (
@@ -163,13 +228,17 @@ function Summary({ state, size }: { state: ReactionState; size: "md" | "sm" }) {
     .sort((a, b) => b[1] - a[1]);
   const total = entries.reduce((sum, [, n]) => sum + n, 0);
   if (total === 0) return null;
-  const face = size === "sm" ? 15 : 19;
+  const badge = size === "sm" ? "h-[18px] w-[18px]" : "h-[22px] w-[22px]";
   return (
     <span className={`inline-flex items-center gap-1.5 pr-2 tabular-nums text-slate-600 ${size === "sm" ? "text-xs" : "text-sm"}`}>
       <span className="inline-flex items-center">
         {entries.slice(0, 3).map(([k], index) => (
-          <span key={k} style={{ zIndex: 3 - index }} className="-ml-1 inline-flex rounded-full bg-white p-[1.5px] first:ml-0">
-            <ReactionFace kind={k} size={face} />
+          <span
+            key={k}
+            style={{ zIndex: 3 - index, backgroundColor: tint(k, 16) }}
+            className={`-ml-1.5 grid ${badge} place-items-center rounded-full ring-2 ring-white first:ml-0`}
+          >
+            <ReactionFace kind={k} size={size === "sm" ? 11 : 14} />
           </span>
         ))}
       </span>
@@ -285,14 +354,18 @@ export function ReactionBar({
             setOpen(true);
           }
         }}
-        style={{ WebkitTouchCallout: "none", touchAction: "manipulation" }}
+        style={{
+          WebkitTouchCallout: "none",
+          touchAction: "manipulation",
+          backgroundColor: state.mine ? tint(state.mine, 14) : undefined,
+        }}
         className={`grid ${trigger} select-none place-items-center rounded-full transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black disabled:cursor-not-allowed disabled:opacity-50 ${
-          state.mine ? "hover:bg-slate-100" : "text-slate-500 hover:bg-slate-100 hover:text-black"
+          state.mine ? "" : "text-slate-500 hover:bg-slate-100 hover:text-black"
         }`}
       >
         {state.mine ? (
           <span key={state.mine} className="reaction-pop inline-flex">
-            <ReactionFace kind={state.mine} size={triggerFace} />
+            <ReactionFace kind={state.mine} size={triggerFace - 3} />
           </span>
         ) : (
           <SmilePlusIcon className={size === "sm" ? "h-[18px] w-[18px]" : "h-5 w-5"} />
@@ -304,7 +377,7 @@ export function ReactionBar({
       {open && (
         <div
           role="group"
-          className="absolute bottom-full left-0 z-30 mb-1.5 flex items-center gap-0.5 rounded-full border border-slate-200 bg-white p-1.5 shadow-xl"
+          className="absolute bottom-full left-0 z-30 mb-1.5 grid grid-cols-6 gap-0.5 rounded-3xl border border-slate-200 bg-white p-2 shadow-xl"
           onPointerEnter={() => {
             if (closeTimer.current) window.clearTimeout(closeTimer.current);
           }}
@@ -316,12 +389,10 @@ export function ReactionBar({
               aria-label={LABELS[key]}
               aria-pressed={state.mine === key}
               onClick={() => choose(key)}
-              style={{ "--i": index } as React.CSSProperties}
-              className={`reaction-in grid h-10 w-10 origin-bottom place-items-center rounded-full transition duration-150 hover:-translate-y-1.5 hover:scale-[1.35] focus-visible:-translate-y-1.5 focus-visible:scale-[1.35] focus-visible:outline-none ${
-                state.mine === key ? "bg-slate-100" : ""
-              }`}
+              style={{ "--i": index, "--c": COLORS[key], backgroundColor: state.mine === key ? tint(key, 16) : undefined } as React.CSSProperties}
+              className="reaction-in reaction-tray-btn grid h-10 w-10 origin-bottom place-items-center rounded-full transition duration-150 hover:-translate-y-1 hover:scale-[1.22] focus-visible:-translate-y-1 focus-visible:scale-[1.22] focus-visible:outline-none"
             >
-              <ReactionFace kind={key} size={30} />
+              <ReactionFace kind={key} size={24} />
             </button>
           ))}
         </div>
