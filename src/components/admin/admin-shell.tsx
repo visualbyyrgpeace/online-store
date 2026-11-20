@@ -16,6 +16,7 @@ const links = [
   ["/admin/qr-history/", "Lịch sử mã QR"],
   ["/admin/gif-history/", "Lịch sử GIF"],
   ["/admin/customers/", "Thành viên"],
+  ["/admin/forum/", "Giangho Forum"],
 ] as const;
 // Orders (/admin/orders/) and settings (/admin/settings/) still exist for when paid sales are switched on.
 

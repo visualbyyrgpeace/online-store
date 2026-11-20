@@ -4,6 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { Byline } from "@/components/byline";
+import { ChatIcon } from "@/components/forum/forum-icons";
 import { ClipboardIcon, FilmIcon, FolderIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
 import { SITE_NAME } from "@/lib/site-config";
 
@@ -34,6 +35,14 @@ export function Header() {
         <nav className="flex items-center gap-2 text-sm font-medium">
           <Link href="/products/" className="rounded-lg px-3.5 py-2 text-slate-700 transition hover:bg-slate-100">
             Tài nguyên
+          </Link>
+          <Link
+            href="/forum/"
+            aria-label="Giangho Forum"
+            className="flex items-center gap-2 rounded-lg px-3.5 py-2 text-slate-700 transition hover:bg-slate-100"
+          >
+            <ChatIcon className="h-[18px] w-[18px]" />
+            <span className="hidden sm:inline">Giangho Forum</span>
           </Link>
           <details className="group relative">
             <summary className="flex cursor-pointer list-none items-center gap-1.5 rounded-lg px-3.5 py-2 text-slate-700 transition hover:bg-slate-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400 [&::-webkit-details-marker]:hidden">
