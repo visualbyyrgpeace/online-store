@@ -93,6 +93,32 @@ export async function deleteForumComment(id: string): Promise<void> {
   await rpc("forum_delete_comment", { p_id: id });
 }
 
+// ---- Thả icon (reaction) ----
+export const REACTION_KEYS = ["like", "love", "haha", "wow", "sad", "angry"] as const;
+export type ReactionKey = (typeof REACTION_KEYS)[number];
+export type ReactionKind = "post" | "comment";
+export type ReactionState = { counts: Partial<Record<ReactionKey, number>>; mine: ReactionKey | null };
+
+export async function getForumReactions(kind: ReactionKind, ids: string[]): Promise<Record<string, ReactionState>> {
+  const out: Record<string, ReactionState> = {};
+  for (const id of ids) out[id] = { counts: {}, mine: null };
+  if (ids.length === 0) return out;
+  const data = rows<{ target_id: string; reaction: ReactionKey; total: number | string; mine: boolean }>(
+    await rpc("forum_reactions_get", { p_kind: kind, p_ids: ids }),
+  );
+  for (const row of data) {
+    const entry = out[row.target_id];
+    if (!entry || !REACTION_KEYS.includes(row.reaction)) continue;
+    entry.counts[row.reaction] = Number(row.total);
+    if (row.mine) entry.mine = row.reaction;
+  }
+  return out;
+}
+
+export async function setForumReaction(kind: ReactionKind, id: string, reaction: ReactionKey | null): Promise<void> {
+  await rpc("forum_react", { p_kind: kind, p_id: id, p_reaction: reaction });
+}
+
 // ---- Quản trị ----
 export type AdminForumPost = {
   id: string;
@@ -151,6 +177,7 @@ export function forumErrorMessage(err: unknown): string {
   if (msg.includes("invalid_body")) return "Nội dung chưa hợp lệ hoặc quá dài.";
   if (msg.includes("invalid_name")) return "Tên nhân vật không hợp lệ.";
   if (msg.includes("invalid_avatar")) return "Avatar không hợp lệ.";
+  if (msg.includes("invalid_reaction") || msg.includes("invalid_kind")) return "Không thả được icon, vui lòng thử lại.";
   if (msg.includes("invalid_word")) return "Từ không hợp lệ.";
   if (msg.includes("cannot_ban_admin")) return "Không thể chặn tài khoản quản trị viên.";
   if (msg.includes("user_not_found")) return "Không tìm thấy người dùng.";

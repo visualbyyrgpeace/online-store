@@ -5,6 +5,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useState, type KeyboardEvent } from "react";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { ForumFrame } from "@/components/forum/forum-frame";
+import { ReactionBar, useReactions } from "@/components/forum/forum-reactions";
 import { ChatIcon, SendIcon } from "@/components/forum/forum-icons";
 import { FormMessage, inputClass } from "@/components/ui/form";
 import { EmptyState, ErrorState } from "@/components/ui/states";
@@ -39,6 +40,9 @@ function Thread({ profile }: { profile: ForumProfile }) {
   const [error, setError] = useState<string | null>(null);
 
   const comments = fresh ?? (loaded.status === "success" ? loaded.data : null);
+
+  const postReactions = useReactions("post", id ? [id] : [], setError);
+  const commentReactions = useReactions("comment", comments?.map((c) => c.id) ?? [], setError);
 
   async function reload() {
     setFresh(await listForumComments(id));
@@ -126,6 +130,9 @@ function Thread({ profile }: { profile: ForumProfile }) {
         </div>
         <h2 className="mt-4 break-words text-xl font-semibold text-slate-950 sm:text-2xl">{p.title}</h2>
         <p className="mt-3 whitespace-pre-line break-words text-[15px] leading-relaxed text-slate-700">{p.body}</p>
+        <div className="-mb-1 mt-4 border-t border-slate-100 pt-2">
+          <ReactionBar state={postReactions.get(id)} disabled={profile.blocked} onReact={(next) => void postReactions.react(id, next)} />
+        </div>
       </article>
 
       <section className="space-y-3">
@@ -138,7 +145,8 @@ function Thread({ profile }: { profile: ForumProfile }) {
         {comments?.map((c) => (
           <div key={c.id} className="flex gap-3">
             <ForumAvatar avatar={c.avatar} size={36} />
-            <div className="min-w-0 flex-1 rounded-2xl bg-slate-50 px-4 py-3">
+            <div className="min-w-0 flex-1">
+            <div className="rounded-2xl bg-slate-50 px-4 py-3">
               <div className="flex items-center gap-2">
                 <p className="truncate text-sm font-semibold text-slate-950">{c.display_name}</p>
                 {c.is_author && <span className="shrink-0 rounded-full bg-black px-2 py-0.5 text-[11px] font-medium text-white">Chủ bài</span>}
@@ -156,6 +164,15 @@ function Thread({ profile }: { profile: ForumProfile }) {
                 )}
               </div>
               <p className="mt-1 whitespace-pre-line break-words text-sm text-slate-700">{c.body}</p>
+            </div>
+            <div className="mt-0.5 pl-1">
+              <ReactionBar
+                size="sm"
+                state={commentReactions.get(c.id)}
+                disabled={profile.blocked}
+                onReact={(next) => void commentReactions.react(c.id, next)}
+              />
+            </div>
             </div>
           </div>
         ))}

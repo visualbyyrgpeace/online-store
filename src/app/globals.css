@@ -93,3 +93,17 @@ body {
 /* Thanh cuộn ngang gọn (hàng chọn tab tháng). */
 .no-scrollbar { scrollbar-width: none; }
 .no-scrollbar::-webkit-scrollbar { display: none; }
+
+/* Thả icon (diễn đàn): bảng icon bật lên lần lượt, icon vừa chọn nảy nhẹ. */
+@keyframes reaction-in {
+  from { transform: translateY(10px) scale(.4); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+.reaction-in { animation: reaction-in .28s cubic-bezier(.34, 1.56, .64, 1) backwards; animation-delay: calc(var(--i, 0) * 35ms); }
+
+@keyframes reaction-pop {
+  0% { transform: scale(.55); }
+  60% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+.reaction-pop { animation: reaction-pop .32s cubic-bezier(.34, 1.56, .64, 1) backwards; }

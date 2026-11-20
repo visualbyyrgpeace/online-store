@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useState, type FormEvent } from "react";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { ForumFrame } from "@/components/forum/forum-frame";
+import { ReactionBar, useReactions } from "@/components/forum/forum-reactions";
 import { ChatIcon, SendIcon } from "@/components/forum/forum-icons";
 import { FormMessage, inputClass, primaryButton, secondaryButton } from "@/components/ui/form";
 import { EmptyState, ErrorState } from "@/components/ui/states";
@@ -41,6 +42,8 @@ function Feed({ profile }: { profile: ForumProfile }) {
   const extra = more && more.scope === scope ? more : null;
   const items = first.status === "success" ? [...first.data.items, ...(extra?.items ?? [])] : [];
   const hasMore = extra ? extra.hasMore : first.status === "success" && first.data.hasMore;
+
+  const reactions = useReactions("post", items.map((post) => post.id), setError);
 
   async function loadMore() {
     const last = items[items.length - 1];
@@ -149,13 +152,21 @@ function Feed({ profile }: { profile: ForumProfile }) {
             <h2 className="break-words text-base font-semibold text-slate-950">{post.title}</h2>
             <p className="mt-1 line-clamp-3 whitespace-pre-line break-words text-sm text-slate-600">{post.excerpt}</p>
           </Link>
-          <Link
-            href={`/forum/post/?id=${post.id}`}
-            className="mt-3 inline-flex items-center gap-1.5 text-sm text-slate-500 transition hover:text-black"
-          >
-            <ChatIcon className="h-4 w-4" />
-            {post.comment_count}
-          </Link>
+          <div className="-mb-1 mt-3 flex items-center justify-between border-t border-slate-100 pt-2">
+            <ReactionBar
+              state={reactions.get(post.id)}
+              disabled={profile.blocked}
+              onReact={(next) => void reactions.react(post.id, next)}
+            />
+            <Link
+              href={`/forum/post/?id=${post.id}`}
+              aria-label="Bình luận"
+              className="inline-flex h-9 items-center gap-1.5 rounded-full px-3 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-black"
+            >
+              <ChatIcon className="h-[18px] w-[18px]" />
+              {post.comment_count}
+            </Link>
+          </div>
         </article>
       ))}
 

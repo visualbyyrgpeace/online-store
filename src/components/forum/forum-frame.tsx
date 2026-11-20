@@ -41,9 +41,9 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
             type="button"
             onClick={() => setEditing(true)}
             aria-label="Đổi nhân vật"
-            className="flex max-w-[11rem] shrink-0 items-center gap-2 rounded-full border border-slate-200 bg-white py-1.5 pl-1.5 pr-3.5 text-sm font-medium text-slate-800 shadow-sm transition hover:bg-slate-50"
+            className="group flex max-w-[12rem] shrink-0 items-center gap-2 rounded-full bg-slate-100 py-1 pl-1 pr-4 text-sm font-medium text-slate-800 transition hover:bg-slate-200"
           >
-            <ForumAvatar avatar={profile.avatar} size={28} />
+            <ForumAvatar avatar={profile.avatar} size={32} />
             <span className="truncate">{profile.display_name}</span>
           </button>
         )}
@@ -56,13 +56,13 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
           <Fragment key={`${profile.display_name}|${profile.avatar}`}>{children(profile)}</Fragment>
         </div>
       ) : (
-        <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
-          <h2 className="mb-5 text-lg font-semibold text-slate-950">Chọn nhân vật của bạn</h2>
+        <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
+          <h2 className="mb-6 text-center text-xl font-semibold tracking-tight text-slate-950">Chọn nhân vật</h2>
           <ProfilePicker initial={null} submitLabel="Vào diễn đàn" onSaved={setSaved} />
         </div>
       )}
 
-      <Modal open={editing} onClose={() => setEditing(false)} title="Nhân vật của bạn">
+      <Modal open={editing} onClose={() => setEditing(false)} title="Đổi nhân vật">
         <ProfilePicker
           initial={profile}
           submitLabel="Lưu"
