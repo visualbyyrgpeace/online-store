@@ -1,3 +1,4 @@
+import { FunctionsHttpError } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
 
 export type JobStatus = "received" | "priority" | "doing" | "done";
@@ -15,7 +16,12 @@ export type Job = {
 };
 
 export type JobInput = Pick<Job, "task" | "title" | "date" | "status" | "designer" | "quantity" | "assigner">;
-export type JobLink = { scriptUrl: string; token: string };
+/** Job mới không có trạng thái do người dùng chọn: luôn tự là "Đã nhận". */
+export type JobCreateInput = Omit<JobInput, "status">;
+
+/** admin = quản trị; editor = người admin đã thêm; viewer = mọi tài khoản còn lại (chỉ xem + xuất báo cáo). */
+export type JobAccess = "admin" | "editor" | "viewer";
+export const canEditJobs = (access: JobAccess | null): boolean => access === "admin" || access === "editor";
 
 /** Đúng chữ trong cột COMPLETED STATUS của bảng. */
 export const STATUS_LABEL: Record<JobStatus, string> = {
@@ -42,6 +48,13 @@ export type JobErrorCode =
   | "no_tab"
   | "no_layout"
   | "cell_has_formula"
+  | "forbidden"
+  | "not_configured"
+  | "unauthenticated"
+  | "proxy_missing"
+  | "user_not_found"
+  | "bad_request"
+  | "server_misconfigured"
   | "bad_response"
   | "network"
   | "timeout"
@@ -59,7 +72,7 @@ export function describeError(error: unknown): string {
   const code = error instanceof JobApiError ? error.code : "unknown";
   switch (code) {
     case "token_not_set":
-      return "Trong Apps Script bạn chưa đổi dòng TOKEN. Hãy đặt mật mã riêng rồi triển khai lại.";
+      return "Trong Apps Script chưa đổi dòng TOKEN. Hãy đặt mật mã riêng rồi triển khai lại.";
     case "unauthorized":
       return "Mật mã không khớp với TOKEN trong Apps Script.";
     case "not_found":
@@ -77,6 +90,20 @@ export function describeError(error: unknown): string {
       return "Không nhận ra dòng tiêu đề của tab. Cần có các cột TITLE, DEADLINE và COMPLETED STATUS.";
     case "cell_has_formula":
       return "Ô cần ghi đang chứa công thức nên web không ghi đè. Hãy nhập tay dòng này trong Sheet.";
+    case "forbidden":
+      return "Bạn chỉ có quyền xem. Chỉ admin và người được admin thêm mới chỉnh sửa được.";
+    case "not_configured":
+      return "Quản trị viên chưa kết nối Google Sheet cho mục này.";
+    case "unauthenticated":
+      return "Phiên đăng nhập đã hết hạn. Hãy đăng nhập lại.";
+    case "proxy_missing":
+      return "Chưa triển khai Edge Function job-proxy trên Supabase (xem supabase/functions/job-proxy/README.md).";
+    case "user_not_found":
+      return "Không tìm thấy tài khoản nào có email này. Người đó cần đăng ký tài khoản trước.";
+    case "bad_request":
+      return "Dữ liệu gửi đi không hợp lệ. Hãy kiểm tra lại các ô đã nhập.";
+    case "server_misconfigured":
+      return "Máy chủ chưa cấu hình xong (chưa chạy migration hoặc thiếu khóa). Hãy báo quản trị viên.";
     case "missing_title":
       return "Hãy nhập tên công việc.";
     case "bad_response":
@@ -132,8 +159,8 @@ function parseJob(raw: RawJob): Job | null {
   };
 }
 
-// ---- Gọi Apps Script ----
-/** Chỉ nhận địa chỉ web app của Google (để không gửi mật mã tới nơi khác). */
+// ---- Gọi máy chủ (Edge Function job-proxy) ----
+/** Chỉ nhận địa chỉ web app của Google (admin nhập khi kết nối). */
 export function isValidScriptUrl(value: string): boolean {
   try {
     const url = new URL(value);
@@ -143,39 +170,41 @@ export function isValidScriptUrl(value: string): boolean {
   }
 }
 
-const REQUEST_TIMEOUT_MS = 25_000;
+const KNOWN_ERRORS: JobErrorCode[] = [
+  "token_not_set",
+  "unauthorized",
+  "not_found",
+  "missing_title",
+  "stale",
+  "protected",
+  "tab_other_year",
+  "no_source_tab",
+  "no_tab",
+  "no_layout",
+  "cell_has_formula",
+  "forbidden",
+  "not_configured",
+  "unauthenticated",
+  "bad_request",
+  "server_misconfigured",
+  "timeout",
+];
 
-async function call(link: JobLink, payload: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (!isValidScriptUrl(link.scriptUrl)) throw new JobApiError("bad_response");
-  const controller = new AbortController();
-  const timer = window.setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
-  let response: Response;
-  try {
-    // text/plain tránh yêu cầu "preflight" (Apps Script không trả lời OPTIONS).
-    response = await fetch(link.scriptUrl, {
-      method: "POST",
-      headers: { "Content-Type": "text/plain;charset=utf-8" },
-      body: JSON.stringify({ ...payload, token: link.token }),
-      signal: controller.signal,
-    });
-  } catch (err) {
-    throw new JobApiError(err instanceof DOMException && err.name === "AbortError" ? "timeout" : "network");
-  } finally {
-    window.clearTimeout(timer);
-  }
-
-  let data: unknown;
-  try {
-    data = await response.json();
-  } catch {
-    throw new JobApiError("bad_response");
+async function call(payload: Record<string, unknown>): Promise<Record<string, unknown>> {
+  const { data, error } = await createClient().functions.invoke("job-proxy", { body: payload });
+  if (error) {
+    if (error instanceof FunctionsHttpError) {
+      const status = error.context instanceof Response ? error.context.status : 0;
+      if (status === 404) throw new JobApiError("proxy_missing");
+      if (status === 401) throw new JobApiError("unauthenticated");
+    }
+    throw new JobApiError("network");
   }
   if (typeof data !== "object" || data === null) throw new JobApiError("bad_response");
   const body = data as Record<string, unknown>;
   if (body.ok !== true) {
     const code = String(body.error ?? "");
-    const known: JobErrorCode[] = ["token_not_set", "unauthorized", "not_found", "missing_title", "stale", "protected", "tab_other_year", "no_source_tab", "no_tab", "no_layout", "cell_has_formula"];
-    const match = known.find((item) => item === code);
+    const match = KNOWN_ERRORS.find((item) => item === code);
     if (match) throw new JobApiError(match);
     throw new JobApiError("unknown", code);
   }
@@ -202,6 +231,7 @@ function requireJob(raw: unknown): Job {
 
 export type JobList = {
   jobs: Job[];
+  /** Chỉ admin / người được sửa mới có (người chỉ xem nhận chuỗi rỗng). */
   sheetUrl: string;
   /** Tên các tab tháng trong file Sheet (T12, T11…), theo thứ tự trong file. */
   tabs: string[];
@@ -211,9 +241,12 @@ export type JobList = {
   recentTabs: string[];
   /** Mã nội bộ (gid) của từng tab, để mở đúng tab trong Google Sheet. */
   tabGids: Record<string, number>;
-  /** true nếu Apps Script trên Google còn là bản cũ (chưa trả danh sách tab). */
+  /** true nếu Apps Script trên Google còn là bản cũ (chưa có tự đồng bộ COMPLETED). */
   outdated: boolean;
 };
+
+/** Phiên bản script tối thiểu cho tự đồng bộ ô COMPLETED + trạng thái "Đã nhận". */
+const SCRIPT_VERSION = 3;
 
 function gidMap(value: unknown): Record<string, number> {
   const out: Record<string, number> = {};
@@ -227,12 +260,13 @@ function textList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
-/** tab: tên tab tháng muốn xem thêm (ví dụ "T9"); bỏ trống = các tháng gần đây. */
-export async function listJobs(link: JobLink, tab = ""): Promise<JobList> {
-  const body = await call(link, tab ? { action: "list", tab } : { action: "list" });
+/** tab: tên tab tháng muốn xem thêm (ví dụ "T9"); bỏ trống = các tháng gần đây. Mọi tài khoản đăng nhập đều gọi được. */
+export async function listJobs(tab = ""): Promise<JobList> {
+  const body = await call(tab ? { action: "list", tab } : { action: "list" });
   const rows = Array.isArray(body.jobs) ? (body.jobs as RawJob[]) : [];
   const jobs = rows.map(parseJob).filter((job): job is Job => job !== null);
   const tabs = textList(body.tabs);
+  const version = typeof body.version === "number" ? body.version : 0;
   return {
     jobs,
     sheetUrl: typeof body.sheetUrl === "string" ? body.sheetUrl : "",
@@ -241,85 +275,73 @@ export async function listJobs(link: JobLink, tab = ""): Promise<JobList> {
     currentTab: typeof body.currentTab === "string" ? body.currentTab : "",
     recentTabs: textList(body.recentTabs),
     tabGids: gidMap(body.tabGids),
-    outdated: !Array.isArray(body.tabs),
+    outdated: !Array.isArray(body.tabs) || version < SCRIPT_VERSION,
   };
 }
 
-export async function createJob(link: JobLink, input: JobInput): Promise<{ job: Job; tabCreated: boolean }> {
-  const body = await call(link, { action: "create", job: toSheetFields(input) });
+/** Chỉ admin / người được sửa. Trạng thái luôn tự là "Đã nhận" (cả web lẫn script đều ép như vậy). */
+export async function createJob(input: JobCreateInput): Promise<{ job: Job; tabCreated: boolean }> {
+  const body = await call({ action: "create", job: toSheetFields(input) });
   return { job: requireJob(body.job), tabCreated: body.tabCreated === true };
 }
 
-/** expectedTitle: tên việc lúc web tải, để script chắc chắn đang sửa đúng dòng. */
-export async function updateJob(link: JobLink, job: Pick<Job, "id" | "title">, patch: Partial<JobInput>): Promise<Job> {
-  const body = await call(link, { action: "update", id: job.id, expectedTitle: job.title, patch: toSheetFields(patch) });
+/** expectedTitle: tên việc lúc web tải, để script chắc chắn đang sửa đúng dòng. Đổi sang "Kết thúc" thì ô COMPLETED trong Sheet tự được tích. */
+export async function updateJob(job: Pick<Job, "id" | "title">, patch: Partial<JobInput>): Promise<Job> {
+  const body = await call({ action: "update", id: job.id, expectedTitle: job.title, patch: toSheetFields(patch) });
   return requireJob(body.job);
 }
 
-export async function deleteJob(link: JobLink, job: Pick<Job, "id" | "title">): Promise<void> {
-  await call(link, { action: "delete", id: job.id, expectedTitle: job.title });
+export async function deleteJob(job: Pick<Job, "id" | "title">): Promise<void> {
+  await call({ action: "delete", id: job.id, expectedTitle: job.title });
 }
 
-// ---- Lưu liên kết của từng tài khoản (Supabase; dự phòng trên trình duyệt nếu chưa chạy migration) ----
-const LOCAL_PREFIX = "job-sheet-link:";
-
-function isMissingTable(code: string | undefined): boolean {
-  return code === "42P01" || code === "PGRST205";
+// ---- Quyền của tài khoản hiện tại ----
+export async function getMyJobAccess(): Promise<JobAccess> {
+  const { data, error } = await createClient().rpc("job_my_access");
+  if (error) throw error;
+  return data === "admin" || data === "editor" ? data : "viewer";
 }
 
-function readLocal(userId: string): JobLink | null {
-  try {
-    const raw = window.localStorage.getItem(LOCAL_PREFIX + userId);
-    if (!raw) return null;
-    const data = JSON.parse(raw) as Partial<JobLink>;
-    return typeof data.scriptUrl === "string" && typeof data.token === "string"
-      ? { scriptUrl: data.scriptUrl, token: data.token }
-      : null;
-  } catch {
-    return null;
-  }
+// ---- Cấu hình liên kết Google Sheet (chỉ admin; URL + TOKEN nằm trên máy chủ) ----
+export async function getSheetConfigured(): Promise<boolean> {
+  const body = await call({ action: "config_status" });
+  return body.configured === true;
 }
 
-function writeLocal(userId: string, link: JobLink | null): void {
-  try {
-    if (link) window.localStorage.setItem(LOCAL_PREFIX + userId, JSON.stringify(link));
-    else window.localStorage.removeItem(LOCAL_PREFIX + userId);
-  } catch {
-    /* trình duyệt chặn lưu trữ: bỏ qua */
-  }
+/** Máy chủ thử kết nối thật tới Apps Script trước khi lưu. */
+export async function saveSheetConfig(scriptUrl: string, token: string): Promise<void> {
+  await call({ action: "config_save", scriptUrl, token });
 }
 
-export async function loadLink(userId: string): Promise<JobLink | null> {
-  const { data, error } = await createClient()
-    .from("job_sheet_links")
-    .select("script_url, token")
-    .eq("user_id", userId)
-    .maybeSingle();
+export async function clearSheetConfig(): Promise<void> {
+  await call({ action: "config_clear" });
+}
+
+// ---- Người được admin cho phép chỉnh sửa ----
+export type JobEditor = { userId: string; email: string; fullName: string; addedAt: string };
+
+export async function listJobEditors(): Promise<JobEditor[]> {
+  const { data, error } = await createClient().rpc("job_editors_list");
+  if (error) throw error;
+  const rows = Array.isArray(data) ? (data as Record<string, unknown>[]) : [];
+  return rows.map((row) => ({
+    userId: String(row.user_id ?? ""),
+    email: String(row.email ?? ""),
+    fullName: typeof row.full_name === "string" ? row.full_name : "",
+    addedAt: String(row.created_at ?? ""),
+  }));
+}
+
+export async function addJobEditor(email: string): Promise<void> {
+  const { error } = await createClient().rpc("job_editor_add", { p_email: email.trim() });
   if (error) {
-    if (isMissingTable(error.code)) return readLocal(userId);
+    if (/user_not_found/.test(error.message)) throw new JobApiError("user_not_found");
+    if (/forbidden/.test(error.message)) throw new JobApiError("forbidden");
     throw error;
   }
-  if (!data) return readLocal(userId);
-  return { scriptUrl: String(data.script_url), token: String(data.token) };
 }
 
-export async function saveLink(userId: string, link: JobLink): Promise<void> {
-  const { error } = await createClient()
-    .from("job_sheet_links")
-    .upsert(
-      { user_id: userId, script_url: link.scriptUrl, token: link.token, updated_at: new Date().toISOString() },
-      { onConflict: "user_id" },
-    );
-  if (error) {
-    if (!isMissingTable(error.code)) throw error;
-    writeLocal(userId, link);
-    return;
-  }
-  writeLocal(userId, null);
-}
-
-export async function clearLink(userId: string): Promise<void> {
-  const { error } = await createClient().from("job_sheet_links").delete().eq("user_id", userId);
-  if (error && !isMissingTable(error.code)) throw error;
-  writeLocal(userId, null);
+export async function removeJobEditor(userId: string): Promise<void> {
+  const { error } = await createClient().rpc("job_editor_remove", { p_user_id: userId });
+  if (error) throw error;
 }

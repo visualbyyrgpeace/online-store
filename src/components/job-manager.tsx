@@ -11,35 +11,32 @@ import {
   CheckIcon,
   ClipboardIcon,
   CloseIcon,
-  CopyIcon,
   DownloadIcon,
   EditIcon,
   ExternalIcon,
-  LockIcon,
   PlusIcon,
   RefreshIcon,
   SearchIcon,
   SettingsIcon,
   TrashIcon,
 } from "@/components/utilities/tool-icons";
-import { JOB_APPS_SCRIPT } from "@/lib/job-apps-script";
+import { EditorsPanel, SetupPanel, blackButton, inputClass, outlineButton } from "@/components/job-admin-panels";
 import {
   DEFAULT_ASSIGNERS,
   DEFAULT_DESIGNERS,
   DEFAULT_TASKS,
+  JobApiError,
   STATUS_LABEL,
-  clearLink,
+  canEditJobs,
   createJob,
   deleteJob,
   describeError,
-  isValidScriptUrl,
+  getMyJobAccess,
   listJobs,
-  loadLink,
-  saveLink,
   updateJob,
   type Job,
-  type JobInput,
-  type JobLink,
+  type JobAccess,
+  type JobCreateInput,
   type JobStatus,
 } from "@/services/job-service";
 import {
@@ -60,7 +57,6 @@ import {
 } from "@/lib/job-alerts";
 import { holdKeepAlive, startTicker } from "@/lib/background-ticker";
 import { buildReport } from "@/lib/job-report";
-import { copyText } from "@/utils/clipboard";
 import { isAllowedDriveUrl } from "@/utils/drive";
 
 const STALE_AFTER_MS = 15_000; // quay lại tab trình duyệt sau chừng này thì làm mới ngay
@@ -68,12 +64,6 @@ const POLL_VISIBLE_MS = 30_000; // đang mở trang: hỏi Google Sheet mỗi 30
 const POLL_HIDDEN_MS = 30_000; // trang ở nền: cũng mỗi 30 giây để báo việc mới kịp lúc
 const ALERTS_KEY = "job-alerts-on";
 
-const inputClass =
-  "h-11 w-full rounded-xl border border-slate-200 bg-white px-4 text-sm outline-none transition placeholder:text-slate-400 focus:border-slate-500 focus:ring-4 focus:ring-slate-100";
-const outlineButton =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-slate-200 px-3.5 text-sm font-medium text-slate-800 transition hover:border-slate-900 disabled:cursor-not-allowed disabled:opacity-50";
-const blackButton =
-  "inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-black px-4 text-sm font-semibold text-white transition hover:bg-slate-700 disabled:cursor-not-allowed disabled:bg-slate-300";
 const iconButton =
   "grid h-9 w-9 shrink-0 place-items-center rounded-xl text-slate-500 transition hover:bg-slate-100 hover:text-slate-950";
 
@@ -284,7 +274,9 @@ function JobRow({
   today,
   fresh,
   index,
+  canEdit,
   onToggle,
+  onStart,
   onEdit,
   onDelete,
 }: {
@@ -292,7 +284,9 @@ function JobRow({
   today: string;
   fresh: boolean;
   index: number;
+  canEdit: boolean;
   onToggle: () => void;
+  onStart: () => void;
   onEdit: () => void;
   onDelete: () => void;
 }) {
@@ -308,18 +302,28 @@ function JobRow({
         fresh ? "border-emerald-400 ring-2 ring-emerald-100" : "border-slate-200"
       } ${done ? "bg-slate-50/60" : ""}`}
     >
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-pressed={done}
-        aria-label={done ? "Đánh dấu chưa xong" : "Đánh dấu đã xong"}
-        title={done ? "Đánh dấu chưa xong" : "Đánh dấu đã xong"}
-        className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition ${
-          done ? "border-black bg-black text-white" : "border-slate-300 text-transparent hover:border-slate-900 hover:text-slate-300"
-        }`}
-      >
-        <CheckIcon className="h-3.5 w-3.5" />
-      </button>
+      {canEdit ? (
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-pressed={done}
+          aria-label={done ? "Đánh dấu chưa xong" : "Đánh dấu đã xong"}
+          title={done ? "Mở lại việc này" : "Hoàn thành (tự tích COMPLETED trong Sheet)"}
+          className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 transition ${
+            done ? "border-black bg-black text-white" : "border-slate-300 text-transparent hover:border-slate-900 hover:text-slate-300"
+          }`}
+        >
+          <CheckIcon className="h-3.5 w-3.5" />
+        </button>
+      ) : (
+        <span
+          role="img"
+          aria-label={done ? "Đã xong" : "Chưa xong"}
+          className={`mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full border-2 ${done ? "border-slate-400 bg-slate-400 text-white" : "border-slate-200 text-transparent"}`}
+        >
+          <CheckIcon className="h-3.5 w-3.5" />
+        </span>
+      )}
 
       <div className="min-w-0 flex-1">
         <div className="flex items-start gap-2">
@@ -346,236 +350,22 @@ function JobRow({
         </div>
       </div>
 
-      <div className="flex shrink-0 items-center">
-        <button type="button" onClick={onEdit} aria-label="Sửa" title="Sửa" className={iconButton}>
-          <EditIcon className="h-4 w-4" />
-        </button>
-        <button type="button" onClick={onDelete} aria-label="Xóa" title="Xóa" className={`${iconButton} hover:bg-red-50 hover:text-red-600`}>
-          <TrashIcon className="h-4 w-4" />
-        </button>
-      </div>
-    </li>
-  );
-}
-
-const SETUP_STEPS: string[] = [
-  "Mở file Google Sheet công việc (có các tab T1…T12) rồi vào menu Tiện ích mở rộng → Apps Script.",
-  "Xóa mã mẫu, bấm “Sao chép mã script” bên dưới rồi dán vào. Đổi dòng TOKEN thành mật mã riêng của bạn, bấm Lưu.",
-  "Bấm Triển khai → Tùy chọn triển khai mới → loại “Ứng dụng web”. Chọn Thực thi dưới tên: Tôi; Người có quyền truy cập: Bất kỳ ai. Bấm Triển khai và cấp quyền khi Google hỏi.",
-  "Sao chép “URL ứng dụng web” (kết thúc bằng /exec), dán vào ô bên dưới cùng mật mã vừa đặt.",
-];
-
-// ---- Khóa phần liên kết Google Sheet bằng câu đố ----
-const RIDDLE = "Hồi mới vô năm nhất, khi đang đi học trên con xe Atila thì Thành đã bị rơi gì ra đường?";
-// Mã băm SHA-256 của đáp án đã chuẩn hóa ("bo"): không lưu đáp án dạng chữ trong mã nguồn.
-const RIDDLE_HASH = "3d099d0f13df9d0bb4427a6ce99d61b988861761e286d6e34b17d6371b46b13f";
-
-async function checkRiddle(answer: string): Promise<boolean> {
-  const normalized = fold(answer).replace(/[^a-z0-9]/g, ""); // Bô / bô / BO / bo / "b ô" đều được
-  if (!normalized || !globalThis.crypto?.subtle) return false;
-  const bytes = new TextEncoder().encode(normalized);
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-  const hex = [...new Uint8Array(digest)].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  return hex === RIDDLE_HASH;
-}
-
-/** Chỉ hiện nội dung bên trong (hướng dẫn + URL + mật mã) sau khi trả lời đúng câu đố. Đóng hộp thoại là khóa lại. */
-function LockedSetup({ children }: { children: ReactNode }) {
-  const [unlocked, setUnlocked] = useState(false);
-  const [answer, setAnswer] = useState("");
-  const [error, setError] = useState("");
-  const [checking, setChecking] = useState(false);
-
-  if (unlocked) return <>{children}</>;
-
-  async function submit(event: FormEvent) {
-    event.preventDefault();
-    if (checking) return;
-    setChecking(true);
-    const ok = await checkRiddle(answer);
-    setChecking(false);
-    if (ok) {
-      setUnlocked(true);
-    } else {
-      setError("Chưa đúng rồi, thử lại nhé.");
-      setAnswer("");
-    }
-  }
-
-  return (
-    <form onSubmit={(event) => void submit(event)} className="space-y-4 rounded-2xl bg-slate-50 p-5">
-      <div className="flex items-center gap-3">
-        <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-950 text-white">
-          <LockIcon className="h-5 w-5" />
-        </span>
-        <div>
-          <p className="text-sm font-semibold text-slate-950">Phần này đang bị khóa</p>
-          <p className="text-xs text-slate-500">Trả lời đúng câu đố để mở hướng dẫn và liên kết tới bảng.</p>
-        </div>
-      </div>
-      <p className="text-sm leading-6 text-slate-800">{RIDDLE}</p>
-      <input
-        value={answer}
-        onChange={(event) => {
-          setAnswer(event.target.value);
-          setError("");
-        }}
-        placeholder="Nhập đáp án…"
-        autoComplete="off"
-        autoFocus
-        spellCheck={false}
-        className={inputClass}
-      />
-      {error && (
-        <p role="alert" className="text-sm text-red-600">
-          {error}
-        </p>
-      )}
-      <div className="flex justify-end">
-        <button type="submit" disabled={checking || answer.trim() === ""} className={`${blackButton} px-6`}>
-          Mở khóa
-        </button>
-      </div>
-    </form>
-  );
-}
-
-/** Hướng dẫn + biểu mẫu nối với Google Sheet. Dùng cả khi chưa kết nối và trong hộp Cài đặt. */
-function SetupPanel({
-  userId,
-  initial,
-  onConnected,
-  onDisconnected,
-  onToast,
-}: {
-  userId: string;
-  initial: JobLink | null;
-  onConnected: (link: JobLink) => void;
-  onDisconnected: () => void;
-  onToast: (text: string, ok?: boolean) => void;
-}) {
-  const [scriptUrl, setScriptUrl] = useState(initial?.scriptUrl ?? "");
-  const [token, setToken] = useState(initial?.token ?? "");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const [showCode, setShowCode] = useState(false);
-
-  async function connect(event: FormEvent) {
-    event.preventDefault();
-    if (busy) return;
-    const link: JobLink = { scriptUrl: scriptUrl.trim(), token: token.trim() };
-    if (!isValidScriptUrl(link.scriptUrl)) {
-      setError("Địa chỉ phải bắt đầu bằng https://script.google.com/ và kết thúc bằng /exec.");
-      return;
-    }
-    if (link.token.length < 8) {
-      setError("Mật mã cần ít nhất 8 ký tự (giống dòng TOKEN trong Apps Script).");
-      return;
-    }
-    setBusy(true);
-    setError("");
-    try {
-      await listJobs(link); // thử kết nối thật trước khi lưu
-      await saveLink(userId, link);
-      onConnected(link);
-    } catch (err) {
-      console.error(err);
-      setError(describeError(err));
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function disconnect() {
-    setBusy(true);
-    try {
-      await clearLink(userId);
-      onDisconnected();
-    } catch (err) {
-      console.error(err);
-      setError("Chưa ngắt kết nối được. Vui lòng thử lại.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <div className="space-y-5">
-      <ol className="space-y-3">
-        {SETUP_STEPS.map((step, index) => (
-          <li key={step} className="flex gap-3 text-sm leading-6 text-slate-600">
-            <span className="mt-0.5 grid h-6 w-6 shrink-0 place-items-center rounded-full bg-slate-950 text-xs font-semibold text-white">{index + 1}</span>
-            <span>{step}</span>
-          </li>
-        ))}
-      </ol>
-
-      <div>
-        <div className="flex flex-wrap items-center gap-2">
-          <button
-            type="button"
-            onClick={() => void copyText(JOB_APPS_SCRIPT).then((ok) => onToast(ok ? "Đã sao chép mã script." : "Trình duyệt chưa cho phép sao chép.", ok))}
-            className={outlineButton}
-          >
-            <CopyIcon className="h-4 w-4" />
-            Sao chép mã script
-          </button>
-          <button type="button" onClick={() => setShowCode((current) => !current)} aria-expanded={showCode} className="h-10 rounded-xl px-2.5 text-sm font-medium text-slate-500 transition hover:text-slate-950">
-            {showCode ? "Ẩn mã" : "Xem mã"}
-          </button>
-        </div>
-        {showCode && (
-          <pre className="mt-3 max-h-64 overflow-auto rounded-2xl bg-slate-950 p-4 font-mono text-[11px] leading-5 text-slate-100">{JOB_APPS_SCRIPT}</pre>
-        )}
-      </div>
-
-      <form onSubmit={(event) => void connect(event)} className="space-y-4 rounded-2xl bg-slate-50 p-4">
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium">URL ứng dụng web</span>
-          <input
-            type="password"
-            value={scriptUrl}
-            onChange={(event) => setScriptUrl(event.target.value)}
-            placeholder="https://script.google.com/macros/s/…/exec"
-            spellCheck={false}
-            autoComplete="off"
-            className={`${inputClass} font-mono text-xs`}
-          />
-        </label>
-        <label className="block">
-          <span className="mb-1.5 block text-sm font-medium">Mật mã (TOKEN)</span>
-          <input
-            type="password"
-            value={token}
-            onChange={(event) => setToken(event.target.value)}
-            placeholder="Giống dòng TOKEN trong Apps Script"
-            autoComplete="off"
-            className={inputClass}
-          />
-        </label>
-        {error && (
-          <p role="alert" className="text-sm text-red-600">
-            {error}
-          </p>
-        )}
-        <div className="flex flex-wrap items-center justify-between gap-2">
-          {initial ? (
-            <button type="button" onClick={() => void disconnect()} disabled={busy} className="h-10 rounded-xl px-3 text-sm font-medium text-red-600 transition hover:bg-red-50 disabled:opacity-50">
-              Ngắt kết nối
+      {canEdit && (
+        <div className="flex shrink-0 items-center">
+          {(job.status === "received" || job.status === "priority") && (
+            <button type="button" onClick={onStart} title="Chuyển sang Đang thực hiện" className="mr-1 h-8 rounded-lg bg-emerald-50 px-2.5 text-xs font-semibold text-emerald-700 transition hover:bg-emerald-100">
+              Bắt đầu
             </button>
-          ) : (
-            <span />
           )}
-          <button type="submit" disabled={busy} className={`${blackButton} px-6`}>
-            {busy ? "Đang kết nối…" : initial ? "Lưu & kiểm tra" : "Kết nối Google Sheet"}
+          <button type="button" onClick={onEdit} aria-label="Sửa" title="Sửa" className={iconButton}>
+            <EditIcon className="h-4 w-4" />
+          </button>
+          <button type="button" onClick={onDelete} aria-label="Xóa" title="Xóa" className={`${iconButton} hover:bg-red-50 hover:text-red-600`}>
+            <TrashIcon className="h-4 w-4" />
           </button>
         </div>
-      </form>
-
-      <p className="text-xs leading-5 text-slate-500">
-        Mật mã chỉ lưu trong tài khoản của bạn. Sau khi sửa mã Apps Script, nhớ Triển khai → Quản lý bản triển khai → chọn phiên bản mới để áp dụng.
-      </p>
-    </div>
+      )}
+    </li>
   );
 }
 
@@ -592,9 +382,12 @@ type FormState = {
 };
 
 function JobManagerInner({ userId }: { userId: string }) {
-  const [link, setLink] = useState<JobLink | null>(null);
-  const [linkLoaded, setLinkLoaded] = useState(false);
-  const [linkError, setLinkError] = useState("");
+  const [access, setAccess] = useState<JobAccess | null>(null); // admin | editor | viewer (chỉ để ẩn/hiện nút; máy chủ mới là nơi chặn thật)
+  const [accessError, setAccessError] = useState("");
+  const [notConfigured, setNotConfigured] = useState(false); // admin chưa kết nối Google Sheet
+  const active = access !== null && !notConfigured;
+  const canEdit = canEditJobs(access);
+  const isAdmin = access === "admin";
 
   const [loaded, setLoaded] = useState<{ key: string; jobs: Job[]; sheetUrl: string; tabs: string[]; currentTab: string; recentTabs: string[]; tabGids: Record<string, number>; outdated: boolean } | null>(null);
   const [version, setVersion] = useState(0);
@@ -645,20 +438,18 @@ function JobManagerInner({ userId }: { userId: string }) {
     return () => window.clearInterval(timer);
   }, []);
 
-  // Liên kết Google Sheet của tài khoản.
+  // Quyền của tài khoản: admin / người được admin thêm / chỉ xem.
   useEffect(() => {
     let current = true;
-    loadLink(userId).then(
+    getMyJobAccess().then(
       (value) => {
-        if (!current) return;
-        setLink(value);
-        setLinkLoaded(true);
+        if (current) setAccess(value);
       },
       (err) => {
         console.error(err);
         if (!current) return;
-        setLinkError("Không tải được cài đặt liên kết. Hãy tải lại trang.");
-        setLinkLoaded(true);
+        setAccessError("Không xác định được quyền của bạn nên tạm thời chỉ cho xem. Hãy tải lại trang.");
+        setAccess("viewer");
       },
     );
     return () => {
@@ -667,16 +458,16 @@ function JobManagerInner({ userId }: { userId: string }) {
   }, [userId]);
 
   // Công việc từ Google Sheet.
-  const dataKey = link ? `${link.scriptUrl}|${version}|${viewTab}` : "";
+  const dataKey = active ? `${version}|${viewTab}` : "";
   useEffect(() => {
-    if (!link) return;
+    if (!active) return;
     let current = true;
     const startedAt = Date.now();
     lastFetch.current = startedAt;
 
     // So với lần tải trước để biết có việc mới được book hay không.
-    function detectNewJobs(active: JobLink, rows: Job[]) {
-      const storeKey = `${userId}|${active.scriptUrl}`;
+    function detectNewJobs(rows: Job[]) {
+      const storeKey = `${userId}|jobs`;
       let state = seenRef.current;
       if (!state || state.storeKey !== storeKey) state = { storeKey, seen: loadSeen(storeKey) };
       const { fresh, next } = diffJobs(state.seen, rows);
@@ -695,7 +486,7 @@ function JobManagerInner({ userId }: { userId: string }) {
       playChime();
     }
 
-    listJobs(link, viewTab).then(
+    listJobs(viewTab).then(
       (result) => {
         if (!current) return;
         if (mutatedAt.current > startedAt) {
@@ -705,11 +496,16 @@ function JobManagerInner({ userId }: { userId: string }) {
         setError("");
         setUpdatedAt(Date.now());
         setLoaded({ key: dataKey, jobs: result.jobs, sheetUrl: result.sheetUrl, tabs: result.tabs, currentTab: result.currentTab, recentTabs: result.recentTabs, tabGids: result.tabGids, outdated: result.outdated });
-        detectNewJobs(link, result.jobs);
+        detectNewJobs(result.jobs);
       },
       (err) => {
         console.error(err);
         if (!current) return;
+        if (err instanceof JobApiError && err.code === "not_configured") {
+          setNotConfigured(true);
+          setLoaded(null);
+          return;
+        }
         setError(describeError(err));
         setLoaded((prev) => (prev ? { ...prev, key: dataKey } : { key: dataKey, jobs: [], sheetUrl: "", tabs: [], currentTab: "", recentTabs: [], tabGids: {}, outdated: false }));
       },
@@ -717,7 +513,7 @@ function JobManagerInner({ userId }: { userId: string }) {
     return () => {
       current = false;
     };
-  }, [link, dataKey, userId, viewTab]);
+  }, [active, dataKey, userId, viewTab]);
 
   useEffect(() => {
     preloadSound();
@@ -737,7 +533,7 @@ function JobManagerInner({ userId }: { userId: string }) {
 
   // Tự cập nhật liên tục kể cả khi bạn đang ở tab/phần mềm khác: đồng hồ chạy trong worker nên không bị trình duyệt làm chậm.
   useEffect(() => {
-    if (!link) return;
+    if (!active) return;
     const stopTicker = startTicker(() => {
       const wait = document.visibilityState === "visible" ? POLL_VISIBLE_MS : POLL_HIDDEN_MS;
       if (Date.now() - lastFetch.current >= wait) setVersion((value) => value + 1);
@@ -747,11 +543,11 @@ function JobManagerInner({ userId }: { userId: string }) {
       stopTicker();
       releaseLock();
     };
-  }, [link]);
+  }, [active]);
 
   // Quay lại tab trình duyệt sau một lúc thì tự làm mới (phòng khi bạn vừa sửa trong Google Sheet).
   useEffect(() => {
-    if (!link) return;
+    if (!active) return;
     function onFocus() {
       if (document.visibilityState === "visible" && Date.now() - lastFetch.current > STALE_AFTER_MS) {
         setVersion((current) => current + 1);
@@ -763,11 +559,11 @@ function JobManagerInner({ userId }: { userId: string }) {
       window.removeEventListener("focus", onFocus);
       document.removeEventListener("visibilitychange", onFocus);
     };
-  }, [link]);
+  }, [active]);
 
   const jobs = useMemo(() => loaded?.jobs ?? [], [loaded]);
-  const refreshing = Boolean(link) && loaded?.key !== dataKey;
-  const firstLoad = Boolean(link) && loaded === null;
+  const refreshing = active && loaded?.key !== dataKey;
+  const firstLoad = active && loaded === null;
   const tabs = useMemo(() => loaded?.tabs ?? [], [loaded]);
   const recentTabs = useMemo(() => loaded?.recentTabs ?? [], [loaded]);
   const currentTab = loaded?.currentTab ?? "";
@@ -939,13 +735,12 @@ function JobManagerInner({ userId }: { userId: string }) {
 
   async function submitForm(event: FormEvent) {
     event.preventDefault();
-    if (!form || !link || saving) return;
+    if (!form || !canEdit || saving) return;
     const quantity = Number(form.quantity);
-    const input: JobInput = {
+    const input: JobCreateInput = {
       task: form.task.trim(),
       title: form.title.trim(),
       date: form.date,
-      status: form.status,
       designer: form.designer.trim(),
       quantity: Number.isFinite(quantity) && quantity >= 1 ? Math.min(Math.round(quantity), 999) : 1,
       assigner: form.assigner.trim(),
@@ -960,12 +755,12 @@ function JobManagerInner({ userId }: { userId: string }) {
     mutatedAt.current = Date.now();
     try {
       if (form.id) {
-        const saved = await updateJob(link, { id: form.id, title: form.expectedTitle }, input);
+        const saved = await updateJob({ id: form.id, title: form.expectedTitle }, { ...input, status: form.status });
         patchJobs((rows) => rows.map((row) => (row.id === form.id ? saved : row)));
         mutatedAt.current = Date.now();
         remember(saved);
       } else {
-        const { job: saved, tabCreated } = await createJob(link, input);
+        const { job: saved, tabCreated } = await createJob(input); // trạng thái tự là "Đã nhận"
         patchJobs((rows) => [...rows, saved]);
         mutatedAt.current = Date.now();
         remember(saved);
@@ -981,15 +776,15 @@ function JobManagerInner({ userId }: { userId: string }) {
     }
   }
 
-  async function toggleDone(job: Job) {
-    if (!link) return;
-    const next: JobStatus = job.status === "done" ? "doing" : "done";
+  async function changeStatus(job: Job, next: JobStatus) {
+    if (!canEdit) return;
     mutatedAt.current = Date.now();
     patchJobs((rows) => rows.map((row) => (row.id === job.id ? { ...row, status: next } : row))); // hiện ngay, lỗi thì hoàn lại
     try {
-      const saved = await updateJob(link, job, { status: next });
+      const saved = await updateJob(job, { status: next }); // "Kết thúc" -> Sheet tự tích ô COMPLETED
       mutatedAt.current = Date.now();
       patchJobs((rows) => rows.map((row) => (row.id === job.id ? saved : row)));
+      remember(saved);
     } catch (err) {
       console.error(err);
       patchJobs((rows) => rows.map((row) => (row.id === job.id ? { ...row, status: job.status } : row)));
@@ -998,11 +793,11 @@ function JobManagerInner({ userId }: { userId: string }) {
   }
 
   async function confirmDelete() {
-    if (!toDelete || !link) return;
+    if (!toDelete || !canEdit) return;
     setDeleting(true);
     try {
       mutatedAt.current = Date.now();
-      await deleteJob(link, toDelete);
+      await deleteJob(toDelete);
       mutatedAt.current = Date.now();
       const removed = toDelete.id;
       patchJobs((rows) => rows.filter((row) => row.id !== removed));
@@ -1016,9 +811,9 @@ function JobManagerInner({ userId }: { userId: string }) {
     }
   }
 
-  if (!linkLoaded) return <div className="h-40 animate-pulse rounded-3xl bg-slate-100" aria-busy="true" />;
+  if (access === null) return <div className="h-40 animate-pulse rounded-3xl bg-slate-100" aria-busy="true" />;
 
-  if (!link) {
+  if (notConfigured) {
     return (
       <section className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">
         <div className="mb-5 flex items-start gap-4">
@@ -1026,36 +821,35 @@ function JobManagerInner({ userId }: { userId: string }) {
             <ClipboardIcon className="h-6 w-6" />
           </span>
           <div>
-            <h2 className="text-lg font-semibold text-slate-950">Nối với Google Sheet của bạn</h2>
+            <h2 className="text-lg font-semibold text-slate-950">{isAdmin ? "Nối với Google Sheet" : "Chưa có dữ liệu job"}</h2>
             <p className="mt-1 text-sm leading-6 text-slate-500">
-              Công việc được lưu ngay trong Google Sheet. Bạn thêm, sửa, tick xong trên web hoặc gõ thẳng trong Sheet đều được. Chỉ cần cài đặt một lần, khoảng 3 phút.
+              {isAdmin
+                ? "Chỉ cần cài đặt một lần, khoảng 3 phút. Sau đó mọi thành viên đều xem được job; bạn quyết định ai được chỉnh sửa."
+                : "Quản trị viên chưa kết nối Google Sheet. Bạn sẽ thấy danh sách job ngay khi kết nối xong."}
             </p>
           </div>
         </div>
-        {linkError && (
+        {accessError && (
           <p role="alert" className="mb-4 text-sm text-red-600">
-            {linkError}
+            {accessError}
           </p>
         )}
-        <LockedSetup>
+        {isAdmin && (
           <SetupPanel
-            userId={userId}
-            initial={null}
-            onConnected={(value) => {
-              setLink(value);
+            connected={false}
+            onConnected={() => {
+              setNotConfigured(false);
+              setVersion((current) => current + 1);
               showToast("Đã kết nối Google Sheet.");
             }}
             onDisconnected={() => undefined}
             onToast={showToast}
           />
-        </LockedSetup>
+        )}
         {toast && <ToastView toast={toast} />}
       </section>
     );
   }
-
-  const deploymentId = link.scriptUrl.match(/\/s\/([^/]+)\/exec/)?.[1] ?? "";
-  const shortId = deploymentId ? `••••${deploymentId.slice(-4)}` : ""; // chỉ lộ 4 ký tự cuối để giữ liên kết kín
 
   const progress = counts.todayTotal > 0 ? Math.round((counts.todayDone / counts.todayTotal) * 100) : 0;
 
@@ -1074,10 +868,16 @@ function JobManagerInner({ userId }: { userId: string }) {
               </button>
             )}
           </div>
-          <button type="button" onClick={openCreate} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-black transition hover:bg-slate-200">
-            <PlusIcon className="h-4 w-4" />
-            Thêm việc
-          </button>
+          {canEdit ? (
+            <button type="button" onClick={openCreate} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-black transition hover:bg-slate-200">
+              <PlusIcon className="h-4 w-4" />
+              Thêm việc
+            </button>
+          ) : (
+            <span className="rounded-full bg-white/10 px-3 py-1.5 text-xs font-medium text-white/80" title="Chỉ admin và người được admin thêm mới chỉnh sửa được">
+              Chỉ xem
+            </span>
+          )}
         </div>
         {counts.todayTotal > 0 && (
           <div className="mt-5">
@@ -1181,9 +981,11 @@ function JobManagerInner({ userId }: { userId: string }) {
                 <span className="sm:hidden">Sheet</span>
               </a>
             )}
-            <button type="button" onClick={() => setSettingsOpen(true)} aria-label="Cài đặt liên kết" title="Cài đặt liên kết" className={`${outlineButton} w-10 px-0`}>
-              <SettingsIcon className="h-4 w-4" />
-            </button>
+            {isAdmin && (
+              <button type="button" onClick={() => setSettingsOpen(true)} aria-label="Cài đặt: người được chỉnh sửa và liên kết Sheet" title="Cài đặt: người được chỉnh sửa và liên kết Sheet" className={`${outlineButton} w-10 px-0`}>
+                <SettingsIcon className="h-4 w-4" />
+              </button>
+            )}
           </div>
         </div>
 
@@ -1264,27 +1066,24 @@ function JobManagerInner({ userId }: { userId: string }) {
           </div>
         )}
 
-        {scriptOutdated && (
+        {accessError && (
+          <p role="alert" className="mb-4 rounded-xl bg-amber-50 px-4 py-3 text-sm text-amber-900">
+            {accessError}
+          </p>
+        )}
+
+        {scriptOutdated && isAdmin && (
           <div role="alert" className="mb-4 rounded-2xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm leading-6 text-amber-900">
-            <p className="font-semibold">Script mà web đang gọi vẫn là bản cũ nên chỉ thấy vài tab tháng.</p>
+            <p className="font-semibold">Apps Script trên Google còn là bản cũ nên chưa tự đồng bộ ô COMPLETED.</p>
             <ul className="mt-1.5 list-disc space-y-1 pl-5">
               <li>
-                Web đang gọi bản triển khai có mã <span className="font-mono text-xs">{shortId || "?"}</span> (so với “ID bản triển khai” trong Apps Script → Quản lý bản triển khai).
-              </li>
-              {sheetUrl && (
-                <li>
-                  Script này đang gắn với file Sheet này:{" "}
-                  <a href={sheetUrl} target="_blank" rel="noopener noreferrer" className="font-semibold underline">
-                    mở file
-                  </a>
-                  . Hãy mở Apps Script từ <strong>chính file đó</strong> (Tiện ích mở rộng → Apps Script) rồi dán mã mới, Lưu.
-                </li>
-              )}
-              <li>
-                Triển khai → Quản lý bản triển khai → chọn <strong>đúng bản triển khai có ID trên</strong> → bút chì → Phiên bản: <strong>Phiên bản mới</strong> → Triển khai.
+                Mở Cài đặt (biểu tượng bánh răng) → “Sao chép mã script”, dán đè vào Apps Script của <strong>chính file Sheet</strong> rồi Lưu.
               </li>
               <li>
-                Dán URL <span className="font-mono text-xs">…/exec</span> vào trình duyệt: phải thấy <span className="font-mono text-xs">&quot;version&quot;:2</span>. Rồi bấm làm mới.
+                Triển khai → Quản lý bản triển khai → bút chì → Phiên bản: <strong>Phiên bản mới</strong> → Triển khai.
+              </li>
+              <li>
+                Chạy hàm <span className="font-mono text-xs">caiDatTuDong</span> rồi <span className="font-mono text-xs">dongBoTatCa</span> một lần trong Apps Script, sau đó bấm làm mới ở đây.
               </li>
             </ul>
           </div>
@@ -1330,7 +1129,7 @@ function JobManagerInner({ userId }: { userId: string }) {
               {terms.length > 0
                 ? "Không tìm thấy công việc phù hợp"
                 : tab === "today"
-                  ? "Hôm nay trống việc. Nghỉ ngơi hoặc thêm việc mới nhé."
+                  ? (canEdit ? "Hôm nay trống việc. Nghỉ ngơi hoặc thêm việc mới nhé." : "Hôm nay chưa có việc nào.")
                   : tab === "done"
                     ? "Chưa có việc nào hoàn thành"
                     : tab === "upcoming"
@@ -1342,10 +1141,12 @@ function JobManagerInner({ userId }: { userId: string }) {
                 Xóa tìm kiếm
               </button>
             ) : (
-              <button type="button" onClick={openCreate} className={`${blackButton} mt-4`}>
-                <PlusIcon className="h-4 w-4" />
-                Thêm công việc
-              </button>
+              canEdit && (
+                <button type="button" onClick={openCreate} className={`${blackButton} mt-4`}>
+                  <PlusIcon className="h-4 w-4" />
+                  Thêm công việc
+                </button>
+              )
             )}
           </div>
         ) : (
@@ -1363,7 +1164,7 @@ function JobManagerInner({ userId }: { userId: string }) {
                   )}
                   <ul className="space-y-2">
                     {section.items.map((job, index) => (
-                      <JobRow key={job.id} job={job} today={today} fresh={freshKeys.has(jobKey(job))} index={base + index} onToggle={() => void toggleDone(job)} onEdit={() => openEdit(job)} onDelete={() => setToDelete(job)} />
+                      <JobRow key={job.id} job={job} today={today} fresh={freshKeys.has(jobKey(job))} index={base + index} canEdit={canEdit} onToggle={() => void changeStatus(job, job.status === "done" ? "doing" : "done")} onStart={() => void changeStatus(job, "doing")} onEdit={() => openEdit(job)} onDelete={() => setToDelete(job)} />
                     ))}
                   </ul>
                 </section>
@@ -1408,13 +1209,21 @@ function JobManagerInner({ userId }: { userId: string }) {
                 <Combobox label="Người giao" value={form.assigner} onChange={(assigner) => patchForm({ assigner })} options={assignerOptions} maxLength={60} placeholder="Chọn người giao" />
               </label>
             </div>
-            <Segmented<JobStatus>
-              label="Trạng thái"
-              value={form.status}
-              onChange={(status) => patchForm({ status })}
-              options={(Object.keys(STATUS_LABEL) as JobStatus[]).map((key) => [key, STATUS_SHORT[key]])}
-            />
-            <p className="text-xs leading-5 text-slate-500">Điểm (SCORE) và các cột công thức của bảng do Google Sheet tự tính, web không ghi đè.</p>
+            {form.id ? (
+              <Segmented<JobStatus>
+                label="Trạng thái"
+                value={form.status}
+                onChange={(status) => patchForm({ status })}
+                options={(Object.keys(STATUS_LABEL) as JobStatus[]).map((key) => [key, STATUS_SHORT[key]])}
+              />
+            ) : (
+              <p className="rounded-xl bg-slate-50 px-4 py-3 text-sm text-slate-600">
+                Trạng thái tự động: <span className="font-semibold text-slate-900">Đã nhận</span>. Bấm “Bắt đầu” khi làm và tick hoàn thành khi xong, Google Sheet tự cập nhật theo.
+              </p>
+            )}
+            <p className="text-xs leading-5 text-slate-500">
+              Chọn “Kết thúc” thì ô COMPLETED trong Google Sheet tự được tích (và bỏ tích khi mở lại). Điểm (SCORE) và các cột công thức do Sheet tự tính, web không ghi đè.
+            </p>
             {formError && (
               <p role="alert" className="text-sm text-red-600">
                 {formError}
@@ -1524,25 +1333,30 @@ function JobManagerInner({ userId }: { userId: string }) {
         )}
       </Modal>
 
-      <Modal open={settingsOpen} onClose={() => setSettingsOpen(false)} title="Liên kết Google Sheet" size="lg">
-        <LockedSetup>
-          <SetupPanel
-            userId={userId}
-            initial={link}
-            onConnected={(value) => {
-              setLink(value);
-              setVersion((current) => current + 1);
-              setSettingsOpen(false);
-              showToast("Đã lưu liên kết.");
-            }}
-            onDisconnected={() => {
-              setLink(null);
-              setLoaded(null);
-              setSettingsOpen(false);
-            }}
-            onToast={showToast}
-          />
-        </LockedSetup>
+      <Modal open={settingsOpen && isAdmin} onClose={() => setSettingsOpen(false)} title="Cài đặt Quản lý Job" size="lg">
+        <div className="space-y-8">
+          <section aria-label="Người được chỉnh sửa">
+            <h3 className="mb-3 text-sm font-semibold text-slate-950">Người được chỉnh sửa</h3>
+            <EditorsPanel onToast={showToast} />
+          </section>
+          <section aria-label="Liên kết Google Sheet">
+            <h3 className="mb-3 text-sm font-semibold text-slate-950">Liên kết Google Sheet</h3>
+            <SetupPanel
+              connected
+              onConnected={() => {
+                setVersion((current) => current + 1);
+                setSettingsOpen(false);
+                showToast("Đã lưu liên kết.");
+              }}
+              onDisconnected={() => {
+                setNotConfigured(true);
+                setLoaded(null);
+                setSettingsOpen(false);
+              }}
+              onToast={showToast}
+            />
+          </section>
+        </div>
       </Modal>
 
       {toast && <ToastView toast={toast} />}
