@@ -11,7 +11,7 @@ export function ForumAvatar({ avatar, size = 40 }: { avatar: string; size?: numb
       style={{ width: size, height: size }}
       className={`grid shrink-0 place-items-center rounded-full ${option.tone}`}
     >
-      {glyph({ className: "h-[55%] w-[55%]" })}
+      {glyph ? glyph({ className: "h-[55%] w-[55%]" }) : null}
     </span>
   );
 }

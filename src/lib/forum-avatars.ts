@@ -23,8 +23,10 @@ export const FORUM_AVATARS: AvatarOption[] = [
   { key: "a16", glyph: "diamond", tone: "bg-blue-100 text-blue-700" },
 ];
 
-export const DEFAULT_AVATAR = FORUM_AVATARS[0].key;
+export const DEFAULT_AVATAR = "a01";
+
+const FALLBACK_AVATAR: AvatarOption = { key: "a01", glyph: "star", tone: "bg-amber-100 text-amber-700" };
 
 export function avatarOf(key: string): AvatarOption {
-  return FORUM_AVATARS.find((item) => item.key === key) ?? FORUM_AVATARS[0];
+  return FORUM_AVATARS.find((item) => item.key === key) ?? FALLBACK_AVATAR;
 }
