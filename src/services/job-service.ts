@@ -112,8 +112,10 @@ export function describeError(error: unknown): string {
       return "Không kết nối được tới Google. Kiểm tra mạng rồi thử lại.";
     case "timeout":
       return "Google phản hồi quá lâu. Vui lòng thử lại.";
-    default:
-      return "Chưa thực hiện được. Vui lòng thử lại.";
+    default: {
+      const detail = error instanceof JobApiError && error.message !== "unknown" ? ` (mã lỗi: ${error.message.slice(0, 120)})` : "";
+      return `Chưa thực hiện được. Vui lòng thử lại.${detail}`;
+    }
   }
 }
 
@@ -187,6 +189,7 @@ const KNOWN_ERRORS: JobErrorCode[] = [
   "unauthenticated",
   "bad_request",
   "server_misconfigured",
+  "bad_response",
   "timeout",
 ];
 
