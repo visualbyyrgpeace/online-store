@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { AVATAR_GLYPHS } from "@/components/forum/forum-icons";
-import { DEFAULT_AVATAR, avatarFileUrl, avatarOf } from "@/lib/forum-avatars";
+import { avatarFileUrl, avatarOf } from "@/lib/forum-avatars";
 
 /** Avatar tròn: ảnh có sẵn trong thư mục public/avatars hoặc hình icon có sẵn của web (không có ảnh người dùng tải lên). */
 export function ForumAvatar({ avatar, size = 40 }: { avatar: string; size?: number }) {
@@ -18,7 +18,7 @@ export function ForumAvatar({ avatar, size = 40 }: { avatar: string; size?: numb
     );
   }
 
-  const option = avatarOf(url ? DEFAULT_AVATAR : avatar);
+  const option = avatarOf(url ? "a01" : avatar);
   const glyph = AVATAR_GLYPHS[option.glyph];
   return (
     <span aria-hidden="true" style={{ width: size, height: size }} className={`grid shrink-0 place-items-center rounded-full ${option.tone}`}>

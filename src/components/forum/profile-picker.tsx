@@ -20,7 +20,7 @@ export function ProfilePicker({
 }) {
   const names = useQuery("forum-names", listForumNames);
   const [name, setName] = useState(initial?.display_name ?? "");
-  const [avatar, setAvatar] = useState(initial?.avatar ?? DEFAULT_AVATAR);
+  const [avatar, setAvatar] = useState(initial && ALL_AVATAR_KEYS.includes(initial.avatar) ? initial.avatar : DEFAULT_AVATAR);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 

@@ -25,8 +25,6 @@ export const FORUM_AVATARS: AvatarOption[] = [
   { key: "a16", glyph: "diamond", tone: "bg-blue-100 text-blue-700" },
 ];
 
-export const DEFAULT_AVATAR = "a01";
-
 const FALLBACK_AVATAR: AvatarOption = { key: "a01", glyph: "star", tone: "bg-amber-100 text-amber-700" };
 
 export function avatarOf(key: string): AvatarOption {
@@ -36,7 +34,9 @@ export function avatarOf(key: string): AvatarOption {
 /** Avatar bằng ảnh do chủ web bỏ vào thư mục public/avatars (key dạng "img:ten-file.jpg"). */
 export const IMAGE_PREFIX = "img:";
 export const FILE_AVATAR_KEYS: string[] = AVATAR_FILES.map((file) => IMAGE_PREFIX + file);
-export const ALL_AVATAR_KEYS: string[] = [...FILE_AVATAR_KEYS, ...FORUM_AVATARS.map((item) => item.key)];
+// Danh sách để chọn: chỉ ảnh do chủ web tải lên. Nếu chưa có ảnh nào thì tạm dùng bộ icon để vẫn vào được diễn đàn.
+export const ALL_AVATAR_KEYS: string[] = FILE_AVATAR_KEYS.length > 0 ? FILE_AVATAR_KEYS : FORUM_AVATARS.map((item) => item.key);
+export const DEFAULT_AVATAR: string = ALL_AVATAR_KEYS[0] ?? "a01";
 
 export function avatarFileUrl(key: string): string | null {
   if (!key.startsWith(IMAGE_PREFIX)) return null;
