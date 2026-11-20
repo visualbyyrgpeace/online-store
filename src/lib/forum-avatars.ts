@@ -1,3 +1,5 @@
+import { AVATAR_FILES } from "@/lib/avatar-files";
+
 /**
  * Bộ avatar có sẵn của diễn đàn. Thành viên chỉ chọn trong bộ này, không tải ảnh lên.
  * key (a01…a16) là giá trị lưu trong cơ sở dữ liệu; cơ sở dữ liệu chỉ nhận đúng dạng này.
@@ -29,4 +31,15 @@ const FALLBACK_AVATAR: AvatarOption = { key: "a01", glyph: "star", tone: "bg-amb
 
 export function avatarOf(key: string): AvatarOption {
   return FORUM_AVATARS.find((item) => item.key === key) ?? FALLBACK_AVATAR;
+}
+
+/** Avatar bằng ảnh do chủ web bỏ vào thư mục public/avatars (key dạng "img:ten-file.jpg"). */
+export const IMAGE_PREFIX = "img:";
+export const FILE_AVATAR_KEYS: string[] = AVATAR_FILES.map((file) => IMAGE_PREFIX + file);
+export const ALL_AVATAR_KEYS: string[] = [...FILE_AVATAR_KEYS, ...FORUM_AVATARS.map((item) => item.key)];
+
+export function avatarFileUrl(key: string): string | null {
+  if (!key.startsWith(IMAGE_PREFIX)) return null;
+  const basePath = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
+  return `${basePath}/avatars/${encodeURIComponent(key.slice(IMAGE_PREFIX.length))}`;
 }

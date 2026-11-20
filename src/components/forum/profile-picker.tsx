@@ -5,7 +5,7 @@ import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { CheckIcon } from "@/components/utilities/tool-icons";
 import { FormMessage, primaryButton } from "@/components/ui/form";
 import { useQuery } from "@/hooks/use-query";
-import { DEFAULT_AVATAR, FORUM_AVATARS } from "@/lib/forum-avatars";
+import { ALL_AVATAR_KEYS, DEFAULT_AVATAR } from "@/lib/forum-avatars";
 import { forumErrorMessage, listForumNames, saveForumProfile, type ForumProfile } from "@/services/forum-service";
 
 /** Chọn tên nhân vật (trong danh sách do admin đặt) và avatar (trong bộ có sẵn). */
@@ -75,18 +75,18 @@ export function ProfilePicker({
       <section>
         <h3 className="mb-2.5 text-sm font-medium text-slate-700">Avatar</h3>
         <div className="grid grid-cols-4 gap-3 sm:grid-cols-8">
-          {FORUM_AVATARS.map((item) => (
+          {ALL_AVATAR_KEYS.map((key, index) => (
             <button
-              key={item.key}
+              key={key}
               type="button"
-              aria-pressed={avatar === item.key}
-              aria-label={`Avatar ${item.glyph}`}
-              onClick={() => setAvatar(item.key)}
+              aria-pressed={avatar === key}
+              aria-label={`Avatar ${index + 1}`}
+              onClick={() => setAvatar(key)}
               className={`grid place-items-center rounded-full p-1 transition ${
-                avatar === item.key ? "ring-2 ring-black ring-offset-2" : "hover:scale-105"
+                avatar === key ? "ring-2 ring-black ring-offset-2" : "hover:scale-105"
               }`}
             >
-              <ForumAvatar avatar={item.key} size={44} />
+              <ForumAvatar avatar={key} size={44} />
             </button>
           ))}
         </div>
