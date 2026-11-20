@@ -65,7 +65,7 @@ export function LoginDialog({ open, onClose, onSuccess }: { open: boolean; onClo
 
         <form onSubmit={submit} noValidate className="mt-6 space-y-4">
           {message && <FormMessage kind="error">{message}</FormMessage>}
-          <Field label="Tên đăng nhập hoặc email" name="identifier" autoComplete="username" autoFocus error={errors.identifier} />
+          <Field label="Email hoặc tên đăng nhập" name="identifier" autoComplete="username" autoFocus error={errors.identifier} />
           <Field label="Mật khẩu" name="password" type="password" autoComplete="current-password" error={errors.password} />
           <button type="submit" disabled={busy} className={`${primaryButton} w-full`}>
             {busy ? "Đang đăng nhập..." : "Đăng nhập và tải"}

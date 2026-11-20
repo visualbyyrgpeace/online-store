@@ -6,7 +6,7 @@ import { useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
 import { safeNext } from "@/lib/next-param";
 import { fieldErrors, forgotSchema, formValues, loginSchema, registerSchema, resetSchema } from "@/lib/validation";
-import { requestPasswordReset, signIn, signUp, updatePassword } from "@/services/auth-service";
+import { requestPasswordReset, resendConfirmation, signIn, signUp, updatePassword } from "@/services/auth-service";
 import { AuthCard, Field, FormMessage, primaryButton } from "@/components/ui/form";
 
 type Errors = Record<string, string>;
@@ -14,9 +14,13 @@ const linkClass = "font-medium text-brand-600 hover:text-brand-700 hover:underli
 
 export function LoginForm() {
   const router = useRouter();
-  const next = safeNext(useSearchParams()?.get("next") ?? null);
+  const params = useSearchParams();
+  const next = safeNext(params?.get("next") ?? null);
+  const verified = params?.get("verified") === "1";
   const [errors, setErrors] = useState<Errors>({});
   const [message, setMessage] = useState<string | null>(null);
+  const [unconfirmedEmail, setUnconfirmedEmail] = useState<string | null>(null);
+  const [resent, setResent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -25,18 +29,37 @@ export function LoginForm() {
     if (!parsed.success) return setErrors(fieldErrors(parsed.error));
     setErrors({});
     setMessage(null);
+    setUnconfirmedEmail(null);
+    setResent(false);
     setBusy(true);
     const result = await signIn(parsed.data.identifier, parsed.data.password);
     setBusy(false);
-    if (!result.ok) return setMessage(result.message);
+    if (!result.ok) {
+      setMessage(result.message);
+      if (result.unconfirmed && parsed.data.identifier.includes("@")) setUnconfirmedEmail(parsed.data.identifier);
+      return;
+    }
     router.push(next ?? "/");
+  }
+
+  async function resend() {
+    if (!unconfirmedEmail) return;
+    const result = await resendConfirmation(unconfirmedEmail);
+    if (result.ok) setResent(true);
+    else setMessage(result.message);
   }
 
   return (
     <AuthCard title="Đăng nhập">
       <form onSubmit={onSubmit} noValidate className="space-y-4">
+        {verified && !message && <FormMessage kind="success">Email đã được xác nhận. Bạn có thể đăng nhập.</FormMessage>}
         {message && <FormMessage kind="error">{message}</FormMessage>}
-        <Field label="Tên đăng nhập hoặc email" name="identifier" autoComplete="username" error={errors.identifier} />
+        {unconfirmedEmail && (
+          <button type="button" onClick={resend} disabled={resent} className={`${linkClass} text-sm disabled:text-slate-400 disabled:no-underline`}>
+            {resent ? "Đã gửi lại email xác nhận" : "Gửi lại email xác nhận"}
+          </button>
+        )}
+        <Field label="Email hoặc tên đăng nhập" name="identifier" autoComplete="username" error={errors.identifier} />
         <Field label="Mật khẩu" name="password" type="password" autoComplete="current-password" error={errors.password} />
         <button type="submit" disabled={busy} className={`${primaryButton} w-full`}>
           {busy ? "Đang đăng nhập..." : "Đăng nhập"}
@@ -56,6 +79,8 @@ export function RegisterForm() {
   const next = safeNext(useSearchParams()?.get("next") ?? null);
   const [errors, setErrors] = useState<Errors>({});
   const [message, setMessage] = useState<string | null>(null);
+  const [sentTo, setSentTo] = useState<string | null>(null);
+  const [resent, setResent] = useState(false);
   const [busy, setBusy] = useState(false);
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
@@ -65,17 +90,47 @@ export function RegisterForm() {
     setErrors({});
     setMessage(null);
     setBusy(true);
-    const result = await signUp(parsed.data.username, parsed.data.password);
+    const result = await signUp(parsed.data.email, parsed.data.password);
     setBusy(false);
     if (!result.ok) return setMessage(result.message);
+    if (result.needsConfirm) return setSentTo(parsed.data.email.toLowerCase());
     router.push(next ?? "/");
+  }
+
+  async function resend() {
+    if (!sentTo) return;
+    setMessage(null);
+    const result = await resendConfirmation(sentTo);
+    if (result.ok) setResent(true);
+    else setMessage(result.message);
+  }
+
+  const loginHref = next ? `/login/?next=${encodeURIComponent(next)}` : "/login/";
+
+  if (sentTo) {
+    return (
+      <AuthCard title="Kiểm tra email">
+        <div className="space-y-4">
+          <FormMessage kind="success">
+            Chúng tôi đã gửi liên kết xác nhận đến <strong className="font-semibold">{sentTo}</strong>. Hãy mở email và bấm vào liên kết để hoàn tất đăng ký.
+          </FormMessage>
+          {message && <FormMessage kind="error">{message}</FormMessage>}
+          <button type="button" onClick={resend} disabled={resent} className={`${primaryButton} w-full`}>
+            {resent ? "Đã gửi lại" : "Gửi lại email"}
+          </button>
+        </div>
+        <p className="mt-5 text-sm text-slate-600">
+          <Link href={loginHref} className={linkClass}>Về trang đăng nhập</Link>
+        </p>
+      </AuthCard>
+    );
   }
 
   return (
     <AuthCard title="Tạo tài khoản">
       <form onSubmit={onSubmit} noValidate className="space-y-4">
         {message && <FormMessage kind="error">{message}</FormMessage>}
-        <Field label="Tên đăng nhập" name="username" autoComplete="username" maxLength={30} error={errors.username} />
+        <Field label="Email" name="email" type="email" autoComplete="email" maxLength={254} error={errors.email} />
         <Field label="Mật khẩu (tối thiểu 8 ký tự)" name="password" type="password" autoComplete="new-password" error={errors.password} />
         <Field label="Xác nhận mật khẩu" name="confirm" type="password" autoComplete="new-password" error={errors.confirm} />
         <button type="submit" disabled={busy} className={`${primaryButton} w-full`}>
@@ -83,8 +138,7 @@ export function RegisterForm() {
         </button>
       </form>
       <p className="mt-5 text-sm text-slate-600">
-        <span className="mt-4 block text-xs leading-5 text-slate-500">Admin cần tắt xác nhận email trong Supabase. Tài khoản này không có email khôi phục, hãy ghi nhớ mật khẩu.</span>
-        Đã có tài khoản? <Link href={next ? `/login/?next=${encodeURIComponent(next)}` : "/login/"} className={linkClass}>Đăng nhập</Link>
+        Đã có tài khoản? <Link href={loginHref} className={linkClass}>Đăng nhập</Link>
       </p>
     </AuthCard>
   );
