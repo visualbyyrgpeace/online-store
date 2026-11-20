@@ -26,17 +26,19 @@ export function ForumHome() {
   return <ForumFrame>{(profile) => <Feed profile={profile} />}</ForumFrame>;
 }
 
-type MorePages = { version: number; items: ForumPostItem[]; hasMore: boolean };
+type MorePages = { scope: string; items: ForumPostItem[]; hasMore: boolean };
 
 function Feed({ profile }: { profile: ForumProfile }) {
   const [version, setVersion] = useState(0);
+  const [mine, setMine] = useState(false);
   const [composing, setComposing] = useState(false);
   const [more, setMore] = useState<MorePages | null>(null);
   const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const first = useQuery(`forum-feed:${version}`, () => listForumPosts(null));
+  const scope = `${version}:${mine ? "mine" : "all"}`;
+  const first = useQuery(`forum-feed:${scope}`, () => listForumPosts(null, mine));
 
-  const extra = more && more.version === version ? more : null;
+  const extra = more && more.scope === scope ? more : null;
   const items = first.status === "success" ? [...first.data.items, ...(extra?.items ?? [])] : [];
   const hasMore = extra ? extra.hasMore : first.status === "success" && first.data.hasMore;
 
@@ -46,8 +48,8 @@ function Feed({ profile }: { profile: ForumProfile }) {
     setLoadingMore(true);
     setError(null);
     try {
-      const page = await listForumPosts({ before: last.created_at, beforeId: last.id });
-      setMore({ version, items: [...(extra?.items ?? []), ...page.items], hasMore: page.hasMore });
+      const page = await listForumPosts({ before: last.created_at, beforeId: last.id }, mine);
+      setMore({ scope, items: [...(extra?.items ?? []), ...page.items], hasMore: page.hasMore });
     } catch (err) {
       console.error(err);
       setError(forumErrorMessage(err));
@@ -91,6 +93,26 @@ function Feed({ profile }: { profile: ForumProfile }) {
         </button>
       </div>
 
+      <div role="tablist" className="flex gap-2">
+        {[
+          { value: false, label: "Tất cả" },
+          { value: true, label: "Bài của tôi" },
+        ].map((tab) => (
+          <button
+            key={tab.label}
+            type="button"
+            role="tab"
+            aria-selected={mine === tab.value}
+            onClick={() => setMine(tab.value)}
+            className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
+              mine === tab.value ? "bg-black text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {tab.label}
+          </button>
+        ))}
+      </div>
+
       {error && <FormMessage kind="error">{error}</FormMessage>}
 
       {first.status === "loading" && (
@@ -101,7 +123,7 @@ function Feed({ profile }: { profile: ForumProfile }) {
         </div>
       )}
       {first.status === "error" && <ErrorState />}
-      {first.status === "success" && items.length === 0 && <EmptyState title="Chưa có bài viết nào" />}
+      {first.status === "success" && items.length === 0 && <EmptyState title={mine ? "Bạn chưa đăng bài nào" : "Chưa có bài viết nào"} />}
 
       {items.map((post) => (
         <article key={post.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 sm:p-5">

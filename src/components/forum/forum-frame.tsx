@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type ReactNode } from "react";
+import { Fragment, useState, type ReactNode } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { ChatIcon } from "@/components/forum/forum-icons";
@@ -52,7 +52,8 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
       {profile ? (
         <div className="space-y-4">
           {profile.blocked && <FormMessage kind="error">Tài khoản của bạn đã bị chặn đăng bài và bình luận.</FormMessage>}
-          {children(profile)}
+          {/* Đổi tên / avatar xong thì nội dung bên dưới tải lại để hiện đúng nhân vật mới. */}
+          <Fragment key={`${profile.display_name}|${profile.avatar}`}>{children(profile)}</Fragment>
         </div>
       ) : (
         <div className="rounded-3xl border border-slate-200 bg-white p-5 shadow-sm sm:p-7">

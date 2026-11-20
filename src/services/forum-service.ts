@@ -56,12 +56,13 @@ export async function saveForumProfile(name: string, avatar: string): Promise<vo
 // ---- Bài viết (mới nhất lên đầu) ----
 export type ForumCursor = { before: string; beforeId: string } | null;
 
-export async function listForumPosts(cursor: ForumCursor): Promise<{ items: ForumPostItem[]; hasMore: boolean }> {
+export async function listForumPosts(cursor: ForumCursor, mine = false): Promise<{ items: ForumPostItem[]; hasMore: boolean }> {
   const data = rows<ForumPostItem>(
     await rpc("forum_list_posts", {
       p_limit: FORUM_PAGE_SIZE + 1,
       p_before: cursor?.before ?? null,
       p_before_id: cursor?.beforeId ?? null,
+      p_mine: mine,
     }),
   );
   return { items: data.slice(0, FORUM_PAGE_SIZE), hasMore: data.length > FORUM_PAGE_SIZE };
