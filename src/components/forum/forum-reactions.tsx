@@ -221,32 +221,6 @@ export function useReactions(kind: ReactionKind, ids: string[], onError?: (messa
 // ---------------------------------------------------------------------------------------------
 // Giao diện
 
-/** Các icon đang được thả nhiều nhất, xếp chồng nhẹ, kèm tổng số. */
-function Summary({ state, size }: { state: ReactionState; size: "md" | "sm" }) {
-  const entries = REACTION_KEYS.map((k) => [k, state.counts[k] ?? 0] as const)
-    .filter(([, n]) => n > 0)
-    .sort((a, b) => b[1] - a[1]);
-  const total = entries.reduce((sum, [, n]) => sum + n, 0);
-  if (total === 0) return null;
-  const badge = size === "sm" ? "h-[18px] w-[18px]" : "h-[22px] w-[22px]";
-  return (
-    <span className={`inline-flex items-center gap-1.5 pr-2 tabular-nums text-slate-600 ${size === "sm" ? "text-xs" : "text-sm"}`}>
-      <span className="inline-flex items-center">
-        {entries.slice(0, 3).map(([k], index) => (
-          <span
-            key={k}
-            style={{ zIndex: 3 - index, backgroundColor: tint(k, 16) }}
-            className={`-ml-1.5 grid ${badge} place-items-center rounded-full ring-2 ring-white first:ml-0`}
-          >
-            <ReactionFace kind={k} size={size === "sm" ? 11 : 14} />
-          </span>
-        ))}
-      </span>
-      {total}
-    </span>
-  );
-}
-
 export function ReactionBar({
   state,
   onReact,
@@ -331,8 +305,9 @@ export function ReactionBar({
     onReact(state.mine === key ? null : key);
   }
 
-  const trigger = size === "sm" ? "h-7 w-7" : "h-9 w-9";
-  const triggerFace = size === "sm" ? 18 : 24;
+  const total = REACTION_KEYS.reduce((sum, k) => sum + (state.counts[k] ?? 0), 0);
+  const trigger = size === "sm" ? "h-7 min-w-7 px-1.5 text-xs" : "h-9 min-w-9 px-2.5 text-sm";
+  const iconSize = size === "sm" ? 17 : 20;
 
   return (
     <div ref={root} className="relative flex items-center" onPointerEnter={hoverIn} onPointerLeave={hoverOut}>
@@ -357,22 +332,21 @@ export function ReactionBar({
         style={{
           WebkitTouchCallout: "none",
           touchAction: "manipulation",
-          backgroundColor: state.mine ? tint(state.mine, 14) : undefined,
         }}
-        className={`grid ${trigger} select-none place-items-center rounded-full transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black disabled:cursor-not-allowed disabled:opacity-50 ${
-          state.mine ? "" : "text-slate-500 hover:bg-slate-100 hover:text-black"
+        className={`inline-flex ${trigger} select-none items-center justify-center gap-1.5 rounded-full tabular-nums transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black disabled:cursor-not-allowed disabled:opacity-50 ${
+          state.mine ? "" : "text-slate-500 hover:text-black"
         }`}
       >
         {state.mine ? (
           <span key={state.mine} className="reaction-pop inline-flex">
-            <ReactionFace kind={state.mine} size={triggerFace - 3} />
+            <ReactionFace kind={state.mine} size={iconSize} />
           </span>
         ) : (
-          <SmilePlusIcon className={size === "sm" ? "h-[18px] w-[18px]" : "h-5 w-5"} />
+          <SmilePlusIcon className={size === "sm" ? "h-[17px] w-[17px]" : "h-5 w-5"} />
         )}
+        {total > 0 && <span className={state.mine ? "" : "text-slate-600"} style={state.mine ? { color: COLORS[state.mine] } : undefined}>{total}</span>}
       </button>
 
-      <Summary state={state} size={size} />
 
       {open && (
         <div
