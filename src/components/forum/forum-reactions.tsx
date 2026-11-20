@@ -377,7 +377,8 @@ export function ReactionBar({
       {open && (
         <div
           role="group"
-          className="absolute bottom-full left-0 z-30 mb-1.5 grid grid-cols-6 gap-0.5 rounded-3xl border border-slate-200 bg-white p-2 shadow-xl"
+          style={{ gridTemplateColumns: "repeat(6, 2.5rem)" }}
+          className="absolute bottom-full left-0 z-30 mb-1.5 grid w-max gap-0.5 rounded-3xl border border-slate-200 bg-white p-2 shadow-xl"
           onPointerEnter={() => {
             if (closeTimer.current) window.clearTimeout(closeTimer.current);
           }}
@@ -390,7 +391,7 @@ export function ReactionBar({
               aria-pressed={state.mine === key}
               onClick={() => choose(key)}
               style={{ "--i": index, "--c": COLORS[key], backgroundColor: state.mine === key ? tint(key, 16) : undefined } as React.CSSProperties}
-              className="reaction-in reaction-tray-btn grid h-10 w-10 origin-bottom place-items-center rounded-full transition duration-150 hover:-translate-y-1 hover:scale-[1.22] focus-visible:-translate-y-1 focus-visible:scale-[1.22] focus-visible:outline-none"
+              className="reaction-in reaction-tray-btn grid h-10 w-10 shrink-0 origin-bottom place-items-center rounded-full transition duration-150 hover:-translate-y-1 hover:scale-[1.22] focus-visible:-translate-y-1 focus-visible:scale-[1.22] focus-visible:outline-none"
             >
               <ReactionFace kind={key} size={24} />
             </button>
