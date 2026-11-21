@@ -163,3 +163,58 @@ export const AVATAR_GLYPHS: Record<string, (p: IconProps) => ReactNode> = {
     </Svg>
   ),
 };
+
+// ---- Icon cảm xúc (nét line) ----
+const face = (features: ReactNode) => {
+  const Glyph = (p: IconProps) => (
+    <Svg {...p}>
+      <circle cx="12" cy="12" r="9" />
+      {features}
+    </Svg>
+  );
+  return Glyph;
+};
+
+export const REACTION_GLYPHS: Record<string, (p: IconProps) => ReactNode> = {
+  like: (p) => (
+    <Svg {...p}>
+      <path d="M7 10v12" />
+      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88z" />
+    </Svg>
+  ),
+  love: (p) => (
+    <Svg {...p}>
+      <path d="M12 20s-7.5-4.6-7.5-10A4.5 4.5 0 0 1 12 7.2 4.5 4.5 0 0 1 19.5 10c0 5.4-7.5 10-7.5 10z" />
+    </Svg>
+  ),
+  haha: face(
+    <>
+      <path d="M8 10a1.5 1.5 0 0 1 3 0M13 10a1.5 1.5 0 0 1 3 0" />
+      <path d="M7.5 13.5h9a4.5 4.5 0 0 1-9 0z" />
+    </>,
+  ),
+  wow: face(
+    <>
+      <path d="M9 10v.01M15 10v.01" />
+      <ellipse cx="12" cy="16" rx="2" ry="2.5" />
+    </>,
+  ),
+  sad: face(
+    <>
+      <path d="M9 10v.01M15 10v.01" />
+      <path d="M8.5 16.5a4.5 4.5 0 0 1 7 0" />
+    </>,
+  ),
+  angry: face(
+    <>
+      <path d="M7.5 8.5l3 1.5M16.5 8.5l-3 1.5" />
+      <path d="M9 12v.01M15 12v.01" />
+      <path d="M8.5 17a4.5 4.5 0 0 1 7 0" />
+    </>,
+  ),
+};
+
+export function ReactionGlyph({ kind, className }: { kind: string; className?: string }) {
+  const glyph = REACTION_GLYPHS[kind];
+  return glyph ? <>{glyph({ className })}</> : null;
+}

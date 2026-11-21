@@ -1,377 +1,270 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
-import {
-  REACTION_KEYS,
-  forumErrorMessage,
-  getForumReactions,
-  setForumReaction,
-  type ReactionKey,
-  type ReactionKind,
-  type ReactionState,
-} from "@/services/forum-service";
+import { useEffect, useRef, useState } from "react";
+import { ForumAvatar } from "@/components/forum/forum-avatar";
+import { ReactionGlyph } from "@/components/forum/forum-icons";
+import { ErrorState } from "@/components/ui/states";
+import { Modal } from "@/components/utilities/modal";
+import { useQuery } from "@/hooks/use-query";
+import { REACTIONS, reactionOf } from "@/lib/forum-reactions";
+import { listForumReactors, reactForum, type ForumReactor } from "@/services/forum-service";
 
-const EMPTY: ReactionState = { counts: {}, mine: null };
+type Counts = Record<string, number>;
+type Target = "post" | "comment";
 
-const LABELS: Record<ReactionKey, string> = {
-  like: "Thích",
-  love: "Yêu thích",
-  haha: "Haha",
-  wow: "Wow",
-  sad: "Buồn",
-  angry: "Phẫn nộ",
-  fire: "Cháy",
-  party: "Ăn mừng",
-  cool: "Ngầu",
-  star: "Tuyệt vời",
-  skull: "Xỉu",
-  watch: "Hóng",
-};
-
-/** Mỗi icon một màu nét riêng. */
-const COLORS: Record<ReactionKey, string> = {
-  like: "#3b82f6",
-  love: "#ec4899",
-  haha: "#f59e0b",
-  wow: "#14b8a6",
-  sad: "#0ea5e9",
-  angry: "#ef4444",
-  fire: "#f97316",
-  party: "#a855f7",
-  cool: "#6366f1",
-  star: "#eab308",
-  skull: "#64748b",
-  watch: "#22c55e",
-};
-
-const dot = (x: number, y: number) => <circle cx={x} cy={y} r={0.95} fill="currentColor" stroke="none" />;
-
-/** Icon nét mảnh (lưới 24, nét 1.7, đầu nét tròn), cùng kiểu với bộ icon của web. */
-const ICONS: Record<ReactionKey, React.ReactNode> = {
-  like: (
-    <>
-      <path d="M7 10v12" />
-      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2a3.13 3.13 0 0 1 3 3.88Z" />
-    </>
-  ),
-  love: <path d="M19 14c1.49-1.46 3-3.21 3-5.5A5.5 5.5 0 0 0 16.5 3c-1.76 0-3 .5-4.5 2-1.5-1.5-2.74-2-4.5-2A5.5 5.5 0 0 0 2 8.5c0 2.3 1.5 4.05 3 5.5l7 7Z" />,
-  haha: (
-    <>
-      <circle cx="12" cy="12" r="10" />
-      <path d="M18 13a6 6 0 0 1-6 5 6 6 0 0 1-6-5h12Z" />
-      {dot(9, 9)}
-      {dot(15, 9)}
-    </>
-  ),
-  wow: (
-    <>
-      <circle cx="12" cy="12" r="10" />
-      <ellipse cx="12" cy="16" rx="2" ry="2.6" />
-      <path d="M7.4 7q1.6-1.3 3.2 0M13.4 7q1.6-1.3 3.2 0" />
-      {dot(9, 10.2)}
-      {dot(15, 10.2)}
-    </>
-  ),
-  sad: (
-    <>
-      <circle cx="12" cy="12" r="10" />
-      <path d="M16 16s-1.5-2-4-2-4 2-4 2" />
-      {dot(9, 9)}
-      {dot(15, 9)}
-    </>
-  ),
-  angry: (
-    <>
-      <circle cx="12" cy="12" r="10" />
-      <path d="M16 16s-1.5-2-4-2-4 2-4 2M7.5 8 10 9M14 9l2.5-1" />
-      {dot(9, 12)}
-      {dot(15, 12)}
-    </>
-  ),
-  fire: <path d="M8.5 14.5A2.5 2.5 0 0 0 11 12c0-1.38-.5-2-1-3-1.072-2.143-.224-4.054 2-6 .5 2.5 2 4.9 4 6.5 2 1.6 3 3.5 3 5.5a7 7 0 1 1-14 0c0-1.153.433-2.294 1-3a2.5 2.5 0 0 0 2.5 2.5z" />,
-  party: (
-    <>
-      <path d="M5.8 11.3 2 22l10.7-3.79" />
-      <path d="M11 13c1.93 1.93 2.83 4.17 2 5-.83.83-3.07-.07-5-2-1.93-1.93-2.83-4.17-2-5 .83-.83 3.07.07 5 2Z" />
-      <path d="m22 2-2.24.75a2.9 2.9 0 0 0-1.96 3.12c.1.86-.57 1.63-1.45 1.63h-.38c-.86 0-1.6.6-1.76 1.44L14 10" />
-      <path d="m22 13-.82-.33c-.86-.34-1.82.2-1.98 1.11-.11.7-.72 1.22-1.43 1.22H17" />
-      <path d="m11 2 .33.82c.34.86-.2 1.82-1.11 1.98C9.52 4.9 9 5.52 9 6.23V7" />
-      <path d="M4 3h.01M22 8h.01M15 2h.01M22 20h.01" />
-    </>
-  ),
-  cool: (
-    <>
-      <circle cx="12" cy="12" r="10" />
-      <rect x="5.4" y="8.6" width="5.6" height="3.8" rx="1.7" />
-      <rect x="13" y="8.6" width="5.6" height="3.8" rx="1.7" />
-      <path d="M11 10.2h2M9 16s1 1.7 3 1.7 3-1.7 3-1.7" />
-    </>
-  ),
-  star: <path d="m12 3 2.7 5.6 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.9 1-6.1-4.4-4.3 6.1-.9z" />,
-  skull: (
-    <>
-      <path d="M6.5 15.2V18a1 1 0 0 0 1 1h9a1 1 0 0 0 1-1v-2.8a7.5 7.5 0 1 0-11 0z" />
-      <path d="M10.5 19v2M13.5 19v2" />
-      <circle cx="9.3" cy="12" r="1.2" />
-      <circle cx="14.7" cy="12" r="1.2" />
-    </>
-  ),
-  watch: (
-    <>
-      <path d="M2.5 12C3.5 10.5 7 5.5 12 5.5s8.5 5 9.5 6.5c-1 1.5-4.5 6.5-9.5 6.5S3.5 13.5 2.5 12z" />
-      <circle cx="12" cy="12" r="3" />
-    </>
-  ),
-};
-
-/** Icon thả (nét line, đúng màu của nó). */
-export function ReactionFace({ kind, size = 24 }: { kind: ReactionKey; size?: number }) {
-  return (
-    <svg
-      viewBox="0 0 24 24"
-      width={size}
-      height={size}
-      fill="none"
-      stroke="currentColor"
-      strokeWidth={1.7}
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      aria-hidden="true"
-      style={{ color: COLORS[kind] }}
-      className="block shrink-0"
-    >
-      {ICONS[kind]}
-    </svg>
-  );
-}
-
-const tint = (kind: ReactionKey, percent = 14) => `color-mix(in srgb, ${COLORS[kind]} ${percent}%, white)`;
-
-function SmilePlusIcon({ className = "h-5 w-5" }: { className?: string }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
-      <path d="M22 11v1a10 10 0 1 1-9-10" />
-      <path d="M8 14s1.5 2 4 2 4-2 4-2" />
-      <path d="M9 9h.01M15 9h.01M16 5h6M19 2v6" />
-    </svg>
-  );
-}
-
-// ---------------------------------------------------------------------------------------------
-// Dữ liệu: tải icon theo lô, cập nhật ngay trên màn hình rồi mới gửi lên máy chủ.
-
-function applyReaction(state: ReactionState, next: ReactionKey | null): ReactionState {
-  const counts = { ...state.counts };
-  if (state.mine) {
-    const left = (counts[state.mine] ?? 1) - 1;
-    if (left > 0) counts[state.mine] = left;
-    else delete counts[state.mine];
+/** Cập nhật số đếm tại chỗ (hiện ngay, không chờ máy chủ). */
+function shift(counts: Counts, prev: string | null, next: string | null): Counts {
+  const out: Counts = { ...counts };
+  if (prev) out[prev] = Math.max(0, (out[prev] ?? 0) - 1);
+  if (next) out[next] = (out[next] ?? 0) + 1;
+  for (const key of Object.keys(out)) {
+    if (!out[key]) delete out[key];
   }
-  if (next) counts[next] = (counts[next] ?? 0) + 1;
-  return { counts, mine: next };
+  return out;
 }
 
-export function useReactions(kind: ReactionKind, ids: string[], onError?: (message: string) => void) {
-  const [map, setMap] = useState<Record<string, ReactionState>>({});
-  const requested = useRef<Set<string>>(new Set());
-  const latest = useRef(map);
-  const errorRef = useRef(onError);
-  const key = ids.join(",");
-
-  useEffect(() => {
-    latest.current = map;
-    errorRef.current = onError;
-  });
-
-  useEffect(() => {
-    const missing = ids.filter((id) => !requested.current.has(id));
-    if (missing.length === 0) return;
-    missing.forEach((id) => requested.current.add(id));
-    for (let i = 0; i < missing.length; i += 100) {
-      const chunk = missing.slice(i, i + 100);
-      getForumReactions(kind, chunk)
-        .then((data) => setMap((current) => ({ ...data, ...current })))
-        .catch((err) => {
-          console.error(err);
-          chunk.forEach((id) => requested.current.delete(id));
-        });
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [kind, key]);
-
-  const react = useCallback(
-    async (id: string, next: ReactionKey | null) => {
-      const before = latest.current[id] ?? EMPTY;
-      setMap((current) => ({ ...current, [id]: applyReaction(current[id] ?? EMPTY, next) }));
-      try {
-        await setForumReaction(kind, id, next);
-      } catch (err) {
-        console.error(err);
-        setMap((current) => ({ ...current, [id]: before }));
-        errorRef.current?.(forumErrorMessage(err));
-      }
-    },
-    [kind],
-  );
-
-  const get = useCallback((id: string): ReactionState => map[id] ?? EMPTY, [map]);
-  return { get, react };
-}
-
-// ---------------------------------------------------------------------------------------------
-// Giao diện
-
+/**
+ * Thả cảm xúc kiểu Facebook:
+ *  - Rê chuột vào nút (hoặc nhấn giữ trên điện thoại) để mở khay 6 cảm xúc.
+ *  - Bấm nút: thả "Thích", bấm lại để bỏ. Chọn cảm xúc khác thì đổi.
+ *  - Bấm vào cụm icon + số đếm để xem ai đã thả.
+ */
 export function ReactionBar({
-  state,
-  onReact,
+  target,
+  id,
+  reactions,
+  mine,
   disabled = false,
-  size = "md",
+  compact = false,
 }: {
-  state: ReactionState;
-  onReact: (next: ReactionKey | null) => void;
+  target: Target;
+  id: string;
+  reactions: Counts;
+  mine: string | null;
   disabled?: boolean;
-  size?: "md" | "sm";
+  compact?: boolean;
 }) {
+  const [counts, setCounts] = useState<Counts>(reactions);
+  const [current, setCurrent] = useState<string | null>(mine);
   const [open, setOpen] = useState(false);
-  const root = useRef<HTMLDivElement>(null);
+  const [showWho, setShowWho] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
   const openTimer = useRef<number | null>(null);
   const closeTimer = useRef<number | null>(null);
-  const pressTimer = useRef<number | null>(null);
-  const longPressed = useRef(false);
-
-  const clearTimers = () => {
-    for (const ref of [openTimer, closeTimer, pressTimer]) {
-      if (ref.current) window.clearTimeout(ref.current);
-      ref.current = null;
-    }
-  };
-
-  useEffect(() => clearTimers, []);
+  const longPress = useRef(false);
 
   useEffect(() => {
     if (!open) return;
-    const onDown = (event: PointerEvent) => {
-      if (!root.current?.contains(event.target as Node)) setOpen(false);
+    const close = (event: PointerEvent) => {
+      if (!wrapRef.current?.contains(event.target as Node)) setOpen(false);
     };
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === "Escape") setOpen(false);
-    };
-    document.addEventListener("pointerdown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("pointerdown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
   }, [open]);
 
-  function hoverIn(event: ReactPointerEvent) {
-    if (disabled || event.pointerType !== "mouse") return;
+  function clearTimers() {
+    if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+    if (closeTimer.current !== null) window.clearTimeout(closeTimer.current);
+    openTimer.current = null;
+    closeTimer.current = null;
+  }
+
+  function scheduleOpen(delay: number) {
     clearTimers();
-    openTimer.current = window.setTimeout(() => setOpen(true), 320);
+    openTimer.current = window.setTimeout(() => setOpen(true), delay);
   }
 
-  function hoverOut(event: ReactPointerEvent) {
-    if (event.pointerType !== "mouse") return;
+  function scheduleClose() {
     clearTimers();
-    closeTimer.current = window.setTimeout(() => setOpen(false), 260);
+    closeTimer.current = window.setTimeout(() => setOpen(false), 350);
   }
 
-  function pressStart(event: ReactPointerEvent) {
-    if (disabled || event.pointerType === "mouse") return;
-    longPressed.current = false;
-    pressTimer.current = window.setTimeout(() => {
-      longPressed.current = true;
-      setOpen(true);
-    }, 380);
-  }
-
-  function pressEnd() {
-    if (pressTimer.current) window.clearTimeout(pressTimer.current);
-    pressTimer.current = null;
-  }
-
-  function quickToggle() {
+  async function choose(next: string | null) {
     if (disabled) return;
-    if (longPressed.current) {
-      longPressed.current = false;
+    const prev = current;
+    clearTimers();
+    setOpen(false);
+    setCurrent(next);
+    setCounts((c) => shift(c, prev, next));
+    try {
+      const result = await reactForum(target, id, next);
+      setCounts(result.reactions);
+      setCurrent(result.my_reaction);
+    } catch (err) {
+      console.error(err);
+      setCurrent(prev);
+      setCounts((c) => shift(c, next, prev));
+    }
+  }
+
+  function onButtonClick() {
+    if (longPress.current) {
+      longPress.current = false;
       return;
     }
-    setOpen(false);
-    onReact(state.mine ? null : "like");
+    void choose(current ? null : "like");
   }
 
-  function choose(key: ReactionKey) {
-    setOpen(false);
-    onReact(state.mine === key ? null : key);
-  }
-
-  const total = REACTION_KEYS.reduce((sum, k) => sum + (state.counts[k] ?? 0), 0);
-  const trigger = size === "sm" ? "h-7 min-w-7 px-1.5 text-xs" : "h-9 min-w-9 px-2.5 text-sm";
-  const iconSize = size === "sm" ? 17 : 20;
+  const active = current ? reactionOf(current) : null;
+  const total = Object.values(counts).reduce((sum, n) => sum + n, 0);
+  const top = REACTIONS.filter((item) => (counts[item.kind] ?? 0) > 0)
+    .sort((a, b) => (counts[b.kind] ?? 0) - (counts[a.kind] ?? 0))
+    .slice(0, 3);
+  const iconSize = compact ? "h-4 w-4" : "h-5 w-5";
 
   return (
-    <div ref={root} className="relative flex items-center" onPointerEnter={hoverIn} onPointerLeave={hoverOut}>
-      <button
-        type="button"
-        disabled={disabled}
-        aria-label={state.mine ? LABELS[state.mine] : LABELS.like}
-        aria-pressed={state.mine !== null}
-        aria-haspopup="true"
-        aria-expanded={open}
-        onClick={quickToggle}
-        onPointerDown={pressStart}
-        onPointerUp={pressEnd}
-        onPointerCancel={pressEnd}
-        onContextMenu={(event) => event.preventDefault()}
-        onKeyDown={(event) => {
-          if (event.key === "ArrowUp" || event.key === "ArrowRight") {
-            event.preventDefault();
-            setOpen(true);
-          }
+    <>
+      <div
+        ref={wrapRef}
+        className="relative flex items-center gap-1"
+        onPointerEnter={(e) => {
+          if (e.pointerType === "mouse" && !disabled) scheduleOpen(250);
         }}
-        style={{
-          WebkitTouchCallout: "none",
-          touchAction: "manipulation",
+        onPointerLeave={(e) => {
+          if (e.pointerType === "mouse") scheduleClose();
         }}
-        className={`inline-flex ${trigger} select-none items-center justify-center gap-1.5 rounded-full tabular-nums transition hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black disabled:cursor-not-allowed disabled:opacity-50 ${
-          state.mine ? "" : "text-slate-500 hover:text-black"
-        }`}
       >
-        {state.mine ? (
-          <span key={state.mine} className="reaction-pop inline-flex">
-            <ReactionFace kind={state.mine} size={iconSize} />
-          </span>
-        ) : (
-          <SmilePlusIcon className={size === "sm" ? "h-[17px] w-[17px]" : "h-5 w-5"} />
+        {open && (
+          <div className="absolute bottom-full left-0 z-20 pb-2">
+            <div role="menu" className="flex gap-0.5 rounded-full border border-slate-200 bg-white p-1.5 shadow-xl">
+              {REACTIONS.map((item) => (
+                <button
+                  key={item.kind}
+                  type="button"
+                  role="menuitem"
+                  aria-label={item.label}
+                  title={item.label}
+                  onClick={() => void choose(current === item.kind ? null : item.kind)}
+                  className={`grid place-items-center rounded-full p-1.5 transition duration-150 hover:-translate-y-1 hover:scale-125 ${
+                    current === item.kind ? "bg-slate-100" : ""
+                  }`}
+                >
+                  <ReactionGlyph kind={item.kind} className={`${compact ? "h-6 w-6" : "h-7 w-7"} ${item.color}`} />
+                </button>
+              ))}
+            </div>
+          </div>
         )}
-        {total > 0 && <span className={state.mine ? "" : "text-slate-600"} style={state.mine ? { color: COLORS[state.mine] } : undefined}>{total}</span>}
-      </button>
 
-
-      {open && (
-        <div
-          role="group"
-          style={{ gridTemplateColumns: "repeat(6, 2.5rem)" }}
-          className="absolute bottom-full left-0 z-30 mb-1.5 grid w-max gap-0.5 rounded-3xl border border-slate-200 bg-white p-2 shadow-xl"
-          onPointerEnter={() => {
-            if (closeTimer.current) window.clearTimeout(closeTimer.current);
+        <button
+          type="button"
+          disabled={disabled}
+          onClick={onButtonClick}
+          onContextMenu={(e) => e.preventDefault()}
+          onPointerDown={(e) => {
+            if (e.pointerType === "mouse" || disabled) return;
+            longPress.current = false;
+            clearTimers();
+            openTimer.current = window.setTimeout(() => {
+              longPress.current = true;
+              setOpen(true);
+            }, 400);
           }}
+          onPointerUp={() => {
+            if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+            openTimer.current = null;
+          }}
+          onPointerCancel={() => {
+            if (openTimer.current !== null) window.clearTimeout(openTimer.current);
+            openTimer.current = null;
+          }}
+          className={`inline-flex select-none items-center gap-1.5 rounded-full font-medium transition hover:bg-slate-100 disabled:cursor-not-allowed disabled:opacity-50 ${
+            compact ? "px-2 py-1 text-xs" : "px-3 py-1.5 text-sm"
+          } ${active ? active.color : "text-slate-500"}`}
         >
-          {REACTION_KEYS.map((key, index) => (
-            <button
-              key={key}
-              type="button"
-              aria-label={LABELS[key]}
-              aria-pressed={state.mine === key}
-              onClick={() => choose(key)}
-              style={{ "--i": index, "--c": COLORS[key], backgroundColor: state.mine === key ? tint(key, 16) : undefined } as React.CSSProperties}
-              className="reaction-in reaction-tray-btn grid h-10 w-10 shrink-0 origin-bottom place-items-center rounded-full transition duration-150 hover:-translate-y-1 hover:scale-[1.22] focus-visible:-translate-y-1 focus-visible:scale-[1.22] focus-visible:outline-none"
-            >
-              <ReactionFace kind={key} size={24} />
-            </button>
-          ))}
-        </div>
-      )}
+          <ReactionGlyph kind={active ? active.kind : "like"} className={iconSize} />
+          {active ? active.label : "Thích"}
+        </button>
+
+        {total > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowWho(true)}
+            aria-label="Xem ai đã thả cảm xúc"
+            className={`inline-flex items-center gap-1.5 rounded-full px-1.5 py-1 text-slate-500 transition hover:bg-slate-100 hover:text-slate-800 ${
+              compact ? "text-xs" : "text-sm"
+            }`}
+          >
+            <span className="flex -space-x-1.5">
+              {top.map((item) => (
+                <span key={item.kind} className={`grid h-5 w-5 place-items-center rounded-full text-white ring-2 ring-white ${item.bg}`}>
+                  <ReactionGlyph kind={item.kind} className="h-3 w-3" />
+                </span>
+              ))}
+            </span>
+            {total}
+          </button>
+        )}
+      </div>
+
+      <Modal open={showWho} onClose={() => setShowWho(false)} title="Cảm xúc">
+        <ReactorList target={target} id={id} />
+      </Modal>
+    </>
+  );
+}
+
+function ReactorList({ target, id }: { target: Target; id: string }) {
+  const state = useQuery<ForumReactor[]>(`forum-reactors:${target}:${id}`, () => listForumReactors(target, id));
+  const [filter, setFilter] = useState("all");
+
+  if (state.status === "loading") return <div className="h-40 animate-pulse rounded-2xl bg-slate-100" aria-busy="true" />;
+  if (state.status === "error") return <ErrorState />;
+
+  const all = state.data;
+  if (all.length === 0) return <p className="py-8 text-center text-sm text-slate-500">Chưa có ai thả cảm xúc</p>;
+
+  const tabs = REACTIONS.map((item) => ({ item, n: all.filter((u) => u.kind === item.kind).length })).filter((t) => t.n > 0);
+  const shown = filter === "all" ? all : all.filter((u) => u.kind === filter);
+
+  return (
+    <div className="space-y-3">
+      <div className="flex gap-2 overflow-x-auto pb-1">
+        <button
+          type="button"
+          onClick={() => setFilter("all")}
+          className={`shrink-0 rounded-full px-3.5 py-1.5 text-sm font-medium transition ${
+            filter === "all" ? "bg-black text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+          }`}
+        >
+          Tất cả {all.length}
+        </button>
+        {tabs.map(({ item, n }) => (
+          <button
+            key={item.kind}
+            type="button"
+            onClick={() => setFilter(item.kind)}
+            aria-label={item.label}
+            title={item.label}
+            className={`inline-flex shrink-0 items-center gap-1.5 rounded-full px-3 py-1.5 text-sm font-medium transition ${
+              filter === item.kind ? "bg-black text-white" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
+            }`}
+          >
+            <ReactionGlyph kind={item.kind} className={`h-4 w-4 ${filter === item.kind ? "text-white" : item.color}`} />
+            {n}
+          </button>
+        ))}
+      </div>
+
+      <ul className="max-h-[50vh] divide-y divide-slate-100 overflow-y-auto">
+        {shown.map((user, index) => {
+          const meta = reactionOf(user.kind);
+          return (
+            <li key={`${user.display_name}-${index}`} className="flex items-center gap-3 py-2.5">
+              <span className="relative shrink-0">
+                <ForumAvatar avatar={user.avatar} size={44} />
+                {meta && (
+                  <span className={`absolute -bottom-1 -right-1 grid h-[22px] w-[22px] place-items-center rounded-full text-white ring-2 ring-white ${meta.bg}`}>
+                    <ReactionGlyph kind={user.kind} className="h-3 w-3" />
+                  </span>
+                )}
+              </span>
+              <p className="min-w-0 flex-1 truncate font-medium text-slate-900">{user.display_name}</p>
+              {user.is_me && <span className="shrink-0 rounded-full bg-slate-100 px-2 py-0.5 text-xs font-medium text-slate-600">Bạn</span>}
+            </li>
+          );
+        })}
+      </ul>
     </div>
   );
 }

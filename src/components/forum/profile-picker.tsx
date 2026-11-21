@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
-import { CheckIcon } from "@/components/utilities/tool-icons";
-import { FormMessage, primaryButton } from "@/components/ui/form";
+import { ArrowRightIcon, CheckIcon } from "@/components/utilities/tool-icons";
+import { FormMessage } from "@/components/ui/form";
 import { useQuery } from "@/hooks/use-query";
 import { ALL_AVATAR_KEYS, DEFAULT_AVATAR } from "@/lib/forum-avatars";
 import { forumErrorMessage, listForumNames, saveForumProfile, type ForumProfile } from "@/services/forum-service";
@@ -39,29 +39,34 @@ export function ProfilePicker({
   }
 
   return (
-    <div className="space-y-7">
-      <div className="flex flex-col items-center rounded-3xl bg-slate-50 px-4 pb-6 pt-7">
-        <div key={avatar} className="reaction-pop rounded-full bg-white p-1.5 shadow-md ring-1 ring-slate-200">
-          <ForumAvatar avatar={avatar} size={96} />
+    <div className="space-y-8">
+      {/* Xem trước nhân vật */}
+      <div className="relative overflow-hidden rounded-3xl bg-slate-950 px-6 py-7 text-white sm:px-8">
+        <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
+        <div aria-hidden="true" className="pointer-events-none absolute -bottom-16 -left-10 h-40 w-40 rounded-full bg-white/5 blur-2xl" />
+        <div className="relative flex flex-col items-center gap-4 text-center sm:flex-row sm:text-left">
+          <span className="rounded-full p-1.5 ring-2 ring-white/60">
+            <ForumAvatar avatar={avatar} size={96} />
+          </span>
+          <p className={`min-w-0 break-words text-2xl font-semibold tracking-tight sm:text-3xl ${name ? "text-white" : "text-white/30"}`}>
+            {name || "Tên nhân vật"}
+          </p>
         </div>
-        {name ? (
-          <p className="mt-4 max-w-full truncate text-xl font-semibold tracking-tight text-slate-950">{name}</p>
-        ) : (
-          <span className="mt-4 h-5 w-32 rounded-full bg-slate-200" aria-hidden="true" />
-        )}
       </div>
 
-      <section aria-label="Tên nhân vật">
+      {/* Tên nhân vật */}
+      <section>
+        <h3 className="mb-3 text-sm font-semibold text-slate-900">Tên nhân vật</h3>
         {names.status === "loading" && (
-          <div className="flex flex-wrap justify-center gap-2" aria-busy="true">
-            {[88, 104, 72, 96, 80, 112].map((w, i) => (
-              <span key={i} style={{ width: w }} className="h-10 animate-pulse rounded-full bg-slate-100" />
+          <div className="flex flex-wrap gap-2" aria-busy="true">
+            {[88, 104, 128, 96, 112, 80].map((w) => (
+              <div key={w} style={{ width: w }} className="h-10 animate-pulse rounded-full bg-slate-100" />
             ))}
           </div>
         )}
         {names.status === "error" && <FormMessage kind="error">Không tải được danh sách tên.</FormMessage>}
         {names.status === "success" && (
-          <div className="flex flex-wrap justify-center gap-2">
+          <div className="flex flex-wrap gap-2">
             {names.data.map((item) => {
               const selected = item.name === name;
               return (
@@ -70,12 +75,11 @@ export function ProfilePicker({
                   type="button"
                   aria-pressed={selected}
                   onClick={() => setName(item.name)}
-                  className={`rounded-full px-4 py-2 text-sm font-medium transition duration-200 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-black ${
-                    selected
-                      ? "bg-black text-white shadow-md"
-                      : "bg-slate-100 text-slate-700 hover:bg-slate-200 hover:text-slate-950"
+                  className={`inline-flex items-center gap-1.5 rounded-full px-4 py-2 text-sm font-medium transition ${
+                    selected ? "bg-black text-white shadow-md" : "bg-slate-100 text-slate-700 hover:bg-slate-200"
                   }`}
                 >
+                  {selected && <CheckIcon className="h-4 w-4" />}
                   {item.name}
                 </button>
               );
@@ -84,8 +88,10 @@ export function ProfilePicker({
         )}
       </section>
 
-      <section aria-label="Avatar">
-        <div className="grid grid-cols-5 gap-3 px-1.5 sm:gap-4">
+      {/* Avatar */}
+      <section>
+        <h3 className="mb-3 text-sm font-semibold text-slate-900">Avatar</h3>
+        <div className="grid grid-cols-4 gap-x-3 gap-y-4 sm:grid-cols-5">
           {ALL_AVATAR_KEYS.map((key, index) => {
             const selected = avatar === key;
             return (
@@ -95,13 +101,13 @@ export function ProfilePicker({
                 aria-pressed={selected}
                 aria-label={`Avatar ${index + 1}`}
                 onClick={() => setAvatar(key)}
-                className={`relative rounded-2xl outline-none transition duration-200 focus-visible:ring-2 focus-visible:ring-black focus-visible:ring-offset-2 ${
-                  selected ? "ring-2 ring-black ring-offset-2" : "opacity-80 hover:-translate-y-0.5 hover:opacity-100 hover:shadow-lg"
+                className={`relative mx-auto rounded-full p-1 transition duration-150 ${
+                  selected ? "ring-2 ring-black ring-offset-2" : "opacity-80 hover:scale-105 hover:opacity-100"
                 }`}
               >
-                <ForumAvatar avatar={key} size="full" shape="squircle" />
+                <ForumAvatar avatar={key} size={72} />
                 {selected && (
-                  <span className="reaction-pop absolute -right-1.5 -top-1.5 grid h-6 w-6 place-items-center rounded-full bg-black text-white ring-2 ring-white">
+                  <span className="absolute -bottom-0.5 -right-0.5 grid h-6 w-6 place-items-center rounded-full bg-black text-white ring-2 ring-white">
                     <CheckIcon className="h-3.5 w-3.5" />
                   </span>
                 )}
@@ -112,8 +118,14 @@ export function ProfilePicker({
       </section>
 
       {error && <FormMessage kind="error">{error}</FormMessage>}
-      <button type="button" onClick={submit} disabled={!name || busy} className={`${primaryButton} w-full rounded-2xl py-3.5 text-[15px]`}>
+      <button
+        type="button"
+        onClick={submit}
+        disabled={!name || busy}
+        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 px-5 py-3.5 text-base font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+      >
         {submitLabel}
+        <ArrowRightIcon className="h-5 w-5" />
       </button>
     </div>
   );

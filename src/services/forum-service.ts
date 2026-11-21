@@ -13,6 +13,8 @@ export type ForumPostItem = {
   created_at: string;
   comment_count: number;
   is_mine: boolean;
+  reactions: Record<string, number>;
+  my_reaction: string | null;
 };
 export type ForumPostDetail = Omit<ForumPostItem, "excerpt" | "comment_count"> & { body: string };
 export type ForumComment = {
@@ -23,6 +25,8 @@ export type ForumComment = {
   created_at: string;
   is_mine: boolean;
   is_author: boolean;
+  reactions: Record<string, number>;
+  my_reaction: string | null;
 };
 
 export const FORUM_PAGE_SIZE = 15;
@@ -93,30 +97,20 @@ export async function deleteForumComment(id: string): Promise<void> {
   await rpc("forum_delete_comment", { p_id: id });
 }
 
-// ---- Thả icon (reaction) ----
-export const REACTION_KEYS = ["like", "love", "haha", "wow", "sad", "angry", "fire", "party", "cool", "star", "skull", "watch"] as const;
-export type ReactionKey = (typeof REACTION_KEYS)[number];
-export type ReactionKind = "post" | "comment";
-export type ReactionState = { counts: Partial<Record<ReactionKey, number>>; mine: ReactionKey | null };
+// ---- Cảm xúc ----
+export type ForumReactionSummary = { reactions: Record<string, number>; my_reaction: string | null };
 
-export async function getForumReactions(kind: ReactionKind, ids: string[]): Promise<Record<string, ReactionState>> {
-  const out: Record<string, ReactionState> = {};
-  for (const id of ids) out[id] = { counts: {}, mine: null };
-  if (ids.length === 0) return out;
-  const data = rows<{ target_id: string; reaction: ReactionKey; total: number | string; mine: boolean }>(
-    await rpc("forum_reactions_get", { p_kind: kind, p_ids: ids }),
-  );
-  for (const row of data) {
-    const entry = out[row.target_id];
-    if (!entry || !REACTION_KEYS.includes(row.reaction)) continue;
-    entry.counts[row.reaction] = Number(row.total);
-    if (row.mine) entry.mine = row.reaction;
-  }
-  return out;
+/** reaction = null nghĩa là bỏ cảm xúc. */
+export async function reactForum(target: "post" | "comment", id: string, reaction: string | null): Promise<ForumReactionSummary> {
+  const row = rows<ForumReactionSummary>(await rpc("forum_react", { p_kind: target, p_id: id, p_reaction: reaction }))[0];
+  return row ?? { reactions: {}, my_reaction: reaction };
 }
 
-export async function setForumReaction(kind: ReactionKind, id: string, reaction: ReactionKey | null): Promise<void> {
-  await rpc("forum_react", { p_kind: kind, p_id: id, p_reaction: reaction });
+export type ForumReactor = { display_name: string; avatar: string; kind: string; is_me: boolean };
+
+/** Danh sách người đã thả cảm xúc (chỉ có tên nhân vật và avatar). */
+export async function listForumReactors(target: "post" | "comment", id: string): Promise<ForumReactor[]> {
+  return rows<ForumReactor>(await rpc("forum_reaction_users", { p_kind: target, p_id: id }));
 }
 
 // ---- Quản trị ----
@@ -173,11 +167,11 @@ export function forumErrorMessage(err: unknown): string {
   if (msg.includes("too_fast")) return "Bạn thao tác quá nhanh, hãy chờ một chút rồi thử lại.";
   if (msg.includes("blocked")) return "Tài khoản của bạn đã bị chặn khỏi diễn đàn.";
   if (msg.includes("account_banned")) return "Tài khoản của bạn đang bị khóa.";
+  if (msg.includes("invalid_reaction")) return "Cảm xúc không hợp lệ.";
   if (msg.includes("invalid_title")) return `Tiêu đề cần từ 3 đến ${FORUM_TITLE_MAX} ký tự.`;
   if (msg.includes("invalid_body")) return "Nội dung chưa hợp lệ hoặc quá dài.";
   if (msg.includes("invalid_name")) return "Tên nhân vật không hợp lệ.";
   if (msg.includes("invalid_avatar")) return "Avatar không hợp lệ.";
-  if (msg.includes("invalid_reaction") || msg.includes("invalid_kind")) return "Không thả được icon, vui lòng thử lại.";
   if (msg.includes("invalid_word")) return "Từ không hợp lệ.";
   if (msg.includes("cannot_ban_admin")) return "Không thể chặn tài khoản quản trị viên.";
   if (msg.includes("user_not_found")) return "Không tìm thấy người dùng.";
