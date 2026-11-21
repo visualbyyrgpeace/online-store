@@ -44,6 +44,16 @@ function rows<T>(data: unknown): T[] {
   return Array.isArray(data) ? (data as T[]) : [];
 }
 
+/** Dữ liệu cảm xúc luôn có mặt, kể cả khi cơ sở dữ liệu chưa được cập nhật: trang không bao giờ bị sập vì thiếu trường. */
+function withReactions<T extends object>(row: T): T & { reactions: Record<string, number>; my_reaction: string | null } {
+  const raw = row as { reactions?: unknown; my_reaction?: unknown };
+  return {
+    ...row,
+    reactions: raw.reactions && typeof raw.reactions === "object" ? (raw.reactions as Record<string, number>) : {},
+    my_reaction: typeof raw.my_reaction === "string" ? raw.my_reaction : null,
+  };
+}
+
 // ---- Nhân vật ----
 export async function getMyForumProfile(): Promise<ForumProfile | null> {
   return rows<ForumProfile>(await rpc("forum_my_profile"))[0] ?? null;
@@ -68,12 +78,13 @@ export async function listForumPosts(cursor: ForumCursor, mine = false): Promise
       p_before_id: cursor?.beforeId ?? null,
       p_mine: mine,
     }),
-  );
+  ).map((row) => withReactions(row));
   return { items: data.slice(0, FORUM_PAGE_SIZE), hasMore: data.length > FORUM_PAGE_SIZE };
 }
 
 export async function getForumPost(id: string): Promise<ForumPostDetail | null> {
-  return rows<ForumPostDetail>(await rpc("forum_get_post", { p_id: id }))[0] ?? null;
+  const row = rows<ForumPostDetail>(await rpc("forum_get_post", { p_id: id }))[0];
+  return row ? withReactions(row) : null;
 }
 
 export async function createForumPost(title: string, body: string): Promise<string> {
@@ -86,7 +97,7 @@ export async function deleteForumPost(id: string): Promise<void> {
 
 // ---- Bình luận ----
 export async function listForumComments(postId: string): Promise<ForumComment[]> {
-  return rows<ForumComment>(await rpc("forum_list_comments", { p_post_id: postId }));
+  return rows<ForumComment>(await rpc("forum_list_comments", { p_post_id: postId })).map((row) => withReactions(row));
 }
 
 export async function createForumComment(postId: string, body: string): Promise<void> {
