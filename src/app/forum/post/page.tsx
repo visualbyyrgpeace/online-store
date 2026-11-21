@@ -6,7 +6,7 @@ export const metadata: Metadata = { title: "Giangho Forum" };
 
 export default function Page() {
   return (
-    <Suspense fallback={<div className="h-40 animate-pulse rounded-2xl bg-slate-100" />}>
+    <Suspense fallback={<div className="shimmer h-40 rounded-2xl" />}>
       <ForumPostView />
     </Suspense>
   );

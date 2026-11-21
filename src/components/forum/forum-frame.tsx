@@ -24,40 +24,41 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
 
   const profile = saved ?? (initial.status === "success" ? initial.data : null);
 
-  if (!saved && initial.status === "loading") return <div className="h-40 animate-pulse rounded-2xl bg-slate-100" aria-busy="true" />;
+  if (!saved && initial.status === "loading") return <div className="shimmer h-40 rounded-2xl" aria-busy="true" />;
   if (!saved && initial.status === "error") return <ErrorState />;
 
   return (
-    <div className="mx-auto w-full max-w-3xl">
-      <div className="mb-6 flex items-center justify-between gap-3 sm:mb-8">
-        <Link href="/forum/" className="flex min-w-0 items-center gap-3">
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-black text-white">
-            <ChatIcon className="h-5 w-5" />
+    <div className="mx-auto w-full max-w-4xl">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <Link href="/forum/" className="group flex min-w-0 items-center gap-2.5">
+          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-black text-white transition-transform duration-300 group-hover:-rotate-6 group-active:scale-90">
+            <ChatIcon className="h-[18px] w-[18px]" />
           </span>
-          <h1 className="truncate text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">Giangho Forum</h1>
+          <h1 className="truncate text-xl font-semibold tracking-tight text-slate-950">Giangho Forum</h1>
         </Link>
         {profile && (
           <button
             type="button"
             onClick={() => setEditing(true)}
             aria-label="Đổi nhân vật"
-            className="group flex max-w-[12rem] shrink-0 items-center gap-2 rounded-full bg-slate-100 py-1 pl-1 pr-4 text-sm font-medium text-slate-800 transition hover:bg-slate-200"
+            title="Đổi nhân vật"
+            className="flex max-w-[11rem] shrink-0 items-center gap-2 rounded-full bg-slate-100 py-1 pl-1 pr-3.5 text-[13px] font-medium text-slate-800 transition hover:bg-slate-200 active:scale-95"
           >
-            <ForumAvatar avatar={profile.avatar} size={32} />
+            <ForumAvatar avatar={profile.avatar} size={28} />
             <span className="truncate">{profile.display_name}</span>
           </button>
         )}
       </div>
 
       {profile ? (
-        <div className="space-y-4">
+        <div className="space-y-3">
           {profile.blocked && <FormMessage kind="error">Tài khoản của bạn đã bị chặn đăng bài và bình luận.</FormMessage>}
           {/* Đổi tên / avatar xong thì nội dung bên dưới tải lại để hiện đúng nhân vật mới. */}
           <Fragment key={`${profile.display_name}|${profile.avatar}`}>{children(profile)}</Fragment>
         </div>
       ) : (
-        <div className="rounded-[2rem] border border-slate-200 bg-white p-5 shadow-sm sm:p-8">
-          <h2 className="mb-6 text-center text-xl font-semibold tracking-tight text-slate-950">Chọn nhân vật</h2>
+        <div className="post-in mx-auto max-w-xl rounded-3xl border border-slate-200/80 bg-white p-5 sm:p-6">
+          <h2 className="mb-5 text-center text-lg font-semibold tracking-tight text-slate-950">Chọn nhân vật</h2>
           <ProfilePicker initial={null} submitLabel="Vào diễn đàn" onSaved={setSaved} />
         </div>
       )}

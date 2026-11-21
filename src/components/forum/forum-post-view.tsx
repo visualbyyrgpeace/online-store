@@ -92,26 +92,31 @@ function Thread({ profile }: { profile: ForumProfile }) {
   }
 
   const back = (
-    <Link href="/forum/" className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 transition hover:text-black">
-      <ChevronLeftIcon className="h-4 w-4" />
+    <Link
+      href="/forum/"
+      className="group inline-flex items-center gap-1 rounded-full bg-slate-100 py-1.5 pl-2 pr-3.5 text-[13px] font-medium text-slate-700 transition hover:bg-slate-200 active:scale-95"
+    >
+      <ChevronLeftIcon className="h-4 w-4 transition-transform duration-200 group-hover:-translate-x-0.5" />
       Diễn đàn
     </Link>
   );
 
-  if (post.status === "loading") return <div className="h-48 animate-pulse rounded-2xl bg-slate-100" aria-busy="true" />;
+  if (post.status === "loading") return <div className="shimmer mx-auto h-48 max-w-2xl rounded-2xl" aria-busy="true" />;
   if (post.status === "error") return <ErrorState />;
   if (!post.data) return <EmptyState title="Bài viết không còn tồn tại" href="/forum/" actionLabel="Về diễn đàn" />;
 
   const p = post.data;
   return (
-    <>
+    <div className="mx-auto w-full max-w-2xl space-y-3">
       {back}
-      <article className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm sm:p-6">
-        <div className="flex items-center gap-3">
-          <ForumAvatar avatar={p.avatar} size={44} />
+      <article className="post-in rounded-2xl border border-slate-200/80 bg-white p-4 sm:p-5">
+        <div className="flex items-center gap-2.5">
+          <ForumAvatar avatar={p.avatar} size={36} />
           <div className="min-w-0 flex-1">
-            <p className="truncate text-sm font-semibold text-slate-950">{p.display_name}</p>
-            <p className="text-xs text-slate-500">{timeAgo(p.created_at)}</p>
+            <p className="truncate text-[13px] font-semibold text-slate-950">{p.display_name}</p>
+            <p className="text-[11px] text-slate-400" title={new Date(p.created_at).toLocaleString("vi-VN")}>
+              {timeAgo(p.created_at)}
+            </p>
           </div>
           {p.is_mine && (
             <button
@@ -119,15 +124,15 @@ function Thread({ profile }: { profile: ForumProfile }) {
               onClick={removePost}
               aria-label="Xóa bài viết"
               title="Xóa bài viết"
-              className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+              className="grid h-8 w-8 place-items-center rounded-lg text-slate-300 transition hover:bg-red-50 hover:text-red-600 active:scale-90"
             >
-              <TrashIcon className="h-[18px] w-[18px]" />
+              <TrashIcon className="h-4 w-4" />
             </button>
           )}
         </div>
-        <h2 className="mt-4 break-words text-xl font-semibold text-slate-950 sm:text-2xl">{p.title}</h2>
-        <p className="mt-3 whitespace-pre-line break-words text-[15px] leading-relaxed text-slate-700">{p.body}</p>
-        <div className="mt-4 border-t border-slate-100 pt-2">
+        <h2 className="mt-3 break-words text-lg font-semibold leading-snug text-slate-950 sm:text-xl">{p.title}</h2>
+        <p className="mt-2 whitespace-pre-line break-words text-sm leading-relaxed text-slate-700">{p.body}</p>
+        <div className="mt-3 border-t border-slate-100 pt-1.5">
           <ReactionBar
             key={`${p.id}:${JSON.stringify(p.reactions)}:${p.my_reaction ?? ""}`}
             target="post"
@@ -139,22 +144,23 @@ function Thread({ profile }: { profile: ForumProfile }) {
         </div>
       </article>
 
-      <section className="space-y-3">
-        <h3 className="flex items-center gap-2 text-base font-semibold text-slate-950">
-          <ChatIcon className="h-5 w-5" />
+      <section className="space-y-2.5">
+        <h3 className="flex items-center gap-1.5 text-sm font-semibold text-slate-950">
+          <ChatIcon className="h-4 w-4" />
           {comments?.length ?? 0}
         </h3>
 
         {loaded.status === "error" && !fresh && <ErrorState />}
-        {comments?.map((c) => (
-          <div key={c.id} className="flex gap-3">
-            <ForumAvatar avatar={c.avatar} size={36} />
+        {loaded.status === "loading" && !fresh && <div className="shimmer h-16 rounded-2xl" aria-busy="true" />}
+        {comments?.map((c, index) => (
+          <div key={c.id} style={{ "--i": index } as React.CSSProperties} className="post-in flex gap-2.5">
+            <ForumAvatar avatar={c.avatar} size={30} />
             <div className="min-w-0 flex-1">
-              <div className="rounded-2xl bg-slate-50 px-4 py-3">
+              <div className="rounded-2xl rounded-tl-md bg-slate-100/80 px-3.5 py-2.5">
               <div className="flex items-center gap-2">
-                <p className="truncate text-sm font-semibold text-slate-950">{c.display_name}</p>
-                {c.is_author && <span className="shrink-0 rounded-full bg-black px-2 py-0.5 text-[11px] font-medium text-white">Chủ bài</span>}
-                <span className="shrink-0 text-xs text-slate-500">{timeAgo(c.created_at)}</span>
+                <p className="truncate text-[13px] font-semibold text-slate-950">{c.display_name}</p>
+                {c.is_author && <span className="shrink-0 rounded-full bg-black px-1.5 py-px text-[10px] font-medium text-white">Chủ bài</span>}
+                <span className="shrink-0 text-[11px] text-slate-400">{timeAgo(c.created_at)}</span>
                 {c.is_mine && (
                   <button
                     type="button"
@@ -167,9 +173,9 @@ function Thread({ profile }: { profile: ForumProfile }) {
                   </button>
                 )}
               </div>
-              <p className="mt-1 whitespace-pre-line break-words text-sm text-slate-700">{c.body}</p>
+              <p className="mt-0.5 whitespace-pre-line break-words text-[13px] leading-relaxed text-slate-700">{c.body}</p>
               </div>
-              <div className="mt-1 pl-2">
+              <div className="mt-0.5 pl-1.5">
                 <ReactionBar
                   key={`${c.id}:${JSON.stringify(c.reactions)}:${c.my_reaction ?? ""}`}
                   compact
@@ -188,8 +194,8 @@ function Thread({ profile }: { profile: ForumProfile }) {
       {error && <FormMessage kind="error">{error}</FormMessage>}
 
       {!profile.blocked && (
-        <div className="sticky bottom-3 flex items-end gap-2 rounded-2xl border border-slate-200 bg-white p-2.5 shadow-lg">
-          <ForumAvatar avatar={profile.avatar} size={36} />
+        <div className="sticky bottom-3 flex items-end gap-2 rounded-2xl border border-slate-200 bg-white/95 p-2 shadow-[0_10px_34px_-12px_rgba(0,0,0,.28)] backdrop-blur transition focus-within:border-slate-300">
+          <ForumAvatar avatar={profile.avatar} size={32} />
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -198,7 +204,7 @@ function Thread({ profile }: { profile: ForumProfile }) {
             rows={1}
             placeholder="Viết bình luận…"
             aria-label="Bình luận"
-            className={`${inputClass} max-h-40 min-h-[40px] flex-1 resize-none py-2`}
+            className={`${inputClass} max-h-40 min-h-[38px] flex-1 resize-none py-2`}
           />
           <button
             type="button"
@@ -206,12 +212,12 @@ function Thread({ profile }: { profile: ForumProfile }) {
             disabled={busy || !text.trim()}
             aria-label="Gửi bình luận"
             title="Gửi bình luận"
-            className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-brand-600 text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-50"
+            className="grid h-[38px] w-[38px] shrink-0 place-items-center rounded-xl bg-black text-white transition hover:bg-neutral-800 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
           >
-            <SendIcon className="h-[18px] w-[18px]" />
+            <SendIcon className="h-4 w-4" />
           </button>
         </div>
       )}
-    </>
+    </div>
   );
 }

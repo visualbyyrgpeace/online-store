@@ -1,3 +1,4 @@
+import { dayBounds, dayKeyOf } from "@/lib/forum-days";
 import { createClient } from "@/lib/supabase/client";
 
 // ---- Kiểu dữ liệu (không có thông tin tài khoản thật: diễn đàn hoàn toàn ẩn danh) ----
@@ -80,6 +81,63 @@ export async function listForumPosts(cursor: ForumCursor, mine = false): Promise
     }),
   ).map((row) => withReactions(row));
   return { items: data.slice(0, FORUM_PAGE_SIZE), hasMore: data.length > FORUM_PAGE_SIZE };
+}
+
+// ---- Theo ngày: bài hôm nay + lịch các ngày trước ----
+export type ForumDayCursor = { before: string; beforeId: string };
+export type ForumDayCell = { day: string; count: number; avatar: string };
+
+const MAX_UUID = "ffffffff-ffff-ffff-ffff-ffffffffffff";
+
+/** Bài của một ngày (mới nhất lên đầu). Dùng lại forum_list_posts nên số cảm xúc, bình luận vẫn đúng như cũ. */
+export async function listForumDay(day: string, cursor: ForumDayCursor | null, mine = false): Promise<{ items: ForumPostItem[]; hasMore: boolean }> {
+  const { start, end } = dayBounds(day);
+  const isToday = day === dayKeyOf(new Date());
+  const from = cursor ?? (isToday ? null : { before: end.toISOString(), beforeId: MAX_UUID });
+  const page = await listForumPosts(from, mine);
+  const items = page.items.filter((post) => new Date(post.created_at) >= start);
+  // Gặp bài của ngày trước thì dừng: các trang sau chắc chắn cũ hơn.
+  return { items, hasMore: page.hasMore && items.length === page.items.length };
+}
+
+function isMissingFunction(err: unknown): boolean {
+  const e = err as { code?: string; message?: string } | null;
+  return e?.code === "PGRST202" || e?.code === "42883" || /forum_calendar/.test(e?.message ?? "");
+}
+
+/** Dự phòng khi chưa chạy migration forum_calendar: gom theo ngày từ các bài mới nhất (chỉ đủ cho vài tuần gần đây). */
+async function calendarFromFeed(from: Date, to: Date, mine: boolean): Promise<ForumDayCell[]> {
+  const days = new Map<string, ForumDayCell>();
+  let cursor: ForumDayCursor | null = { before: to.toISOString(), beforeId: MAX_UUID };
+  for (let i = 0; i < 8 && cursor; i++) {
+    const page = await listForumPosts(cursor, mine);
+    for (const post of page.items) {
+      const at = new Date(post.created_at);
+      if (at < from || at >= to) continue;
+      const key = dayKeyOf(at);
+      const cell = days.get(key);
+      if (cell) cell.count += 1;
+      else days.set(key, { day: key, count: 1, avatar: post.avatar });
+    }
+    const last = page.items[page.items.length - 1];
+    cursor = page.hasMore && last && new Date(last.created_at) >= from ? { before: last.created_at, beforeId: last.id } : null;
+  }
+  return [...days.values()].sort((a, b) => a.day.localeCompare(b.day));
+}
+
+/** Những ngày có bài trong một tháng (month: 0–11), kèm số bài và avatar của bài mới nhất. */
+export async function listForumCalendar(year: number, month: number, mine = false): Promise<ForumDayCell[]> {
+  const from = new Date(year, month, 1);
+  const to = new Date(year, month + 1, 1);
+  try {
+    const data = rows<{ day: string; post_count: number | string; avatar: string }>(
+      await rpc("forum_calendar", { p_from: from.toISOString(), p_to: to.toISOString(), p_offset: -from.getTimezoneOffset(), p_mine: mine }),
+    );
+    return data.map((row) => ({ day: String(row.day).slice(0, 10), count: Number(row.post_count), avatar: row.avatar }));
+  } catch (err) {
+    if (!isMissingFunction(err)) throw err;
+    return calendarFromFeed(from, to, mine);
+  }
 }
 
 export async function getForumPost(id: string): Promise<ForumPostDetail | null> {

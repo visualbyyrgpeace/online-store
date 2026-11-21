@@ -1,192 +1,216 @@
 "use client";
 
-import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useRef, useState, type FormEvent } from "react";
+import { DaySheet, ForumCalendar } from "@/components/forum/forum-calendar";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { ForumFrame } from "@/components/forum/forum-frame";
-import { ReactionBar } from "@/components/forum/forum-reactions";
-import { ChatIcon, SendIcon } from "@/components/forum/forum-icons";
-import { FormMessage, inputClass, primaryButton, secondaryButton } from "@/components/ui/form";
-import { EmptyState, ErrorState } from "@/components/ui/states";
+import { SendIcon } from "@/components/forum/forum-icons";
+import { ForumPostCard } from "@/components/forum/forum-post-card";
+import { FormMessage, inputClass, primaryButton } from "@/components/ui/form";
+import { ErrorState } from "@/components/ui/states";
 import { Modal } from "@/components/utilities/modal";
-import { RefreshIcon, TrashIcon } from "@/components/utilities/tool-icons";
-import { useQuery } from "@/hooks/use-query";
+import { CalendarIcon, ChevronRightIcon, PlusIcon, RefreshIcon } from "@/components/utilities/tool-icons";
+import { useForumDayPosts } from "@/hooks/use-forum-day-posts";
+import { dayKeyOf, formatDayLong } from "@/lib/forum-days";
 import {
   FORUM_POST_MAX,
   FORUM_TITLE_MAX,
   createForumPost,
   deleteForumPost,
   forumErrorMessage,
-  listForumPosts,
   type ForumPostItem,
   type ForumProfile,
 } from "@/services/forum-service";
-import { timeAgo } from "@/utils/time-ago";
 
 export function ForumHome() {
   return <ForumFrame>{(profile) => <Feed profile={profile} />}</ForumFrame>;
 }
 
-type MorePages = { scope: string; items: ForumPostItem[]; hasMore: boolean };
+const card = "rounded-2xl border border-slate-200/80 bg-white";
 
+/**
+ * Trang chủ diễn đàn: chỉ hiện bài của HÔM NAY.
+ * Các ngày trước nằm trong lịch (kiểu Locket): bấm một ô để mở lại bài của ngày đó.
+ */
 function Feed({ profile }: { profile: ForumProfile }) {
+  const [today] = useState(() => dayKeyOf(new Date()));
   const [version, setVersion] = useState(0);
   const [mine, setMine] = useState(false);
   const [composing, setComposing] = useState(false);
-  const [more, setMore] = useState<MorePages | null>(null);
-  const [loadingMore, setLoadingMore] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const scope = `${version}:${mine ? "mine" : "all"}`;
-  const first = useQuery(`forum-feed:${scope}`, () => listForumPosts(null, mine));
+  const [calOpen, setCalOpen] = useState(false);
+  const [openDay, setOpenDay] = useState<string | null>(null);
+  const feedRef = useRef<HTMLDivElement>(null);
+  const list = useForumDayPosts(today, mine, version);
 
-  const extra = more && more.scope === scope ? more : null;
-  const items = first.status === "success" ? [...first.data.items, ...(extra?.items ?? [])] : [];
-  const hasMore = extra ? extra.hasMore : first.status === "success" && first.data.hasMore;
-
-  async function loadMore() {
-    const last = items[items.length - 1];
-    if (!last || loadingMore) return;
-    setLoadingMore(true);
-    setError(null);
-    try {
-      const page = await listForumPosts({ before: last.created_at, beforeId: last.id }, mine);
-      setMore({ scope, items: [...(extra?.items ?? []), ...page.items], hasMore: page.hasMore });
-    } catch (err) {
-      console.error(err);
-      setError(forumErrorMessage(err));
-    } finally {
-      setLoadingMore(false);
-    }
-  }
+  const refresh = () => setVersion((v) => v + 1);
 
   async function remove(post: ForumPostItem) {
     if (!window.confirm("Xóa bài viết này?")) return;
-    setError(null);
+    list.setError(null);
     try {
       await deleteForumPost(post.id);
-      setVersion((v) => v + 1);
+      refresh();
     } catch (err) {
       console.error(err);
-      setError(forumErrorMessage(err));
+      list.setError(forumErrorMessage(err));
     }
   }
 
+  function pickDay(day: string) {
+    if (day === today) feedRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+    else setOpenDay(day);
+  }
+
+  const count = list.status === "success" ? `${list.items.length}${list.hasMore ? "+" : ""} bài` : "";
+
   return (
-    <>
-      <div className="flex items-center gap-3">
+    <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_17.5rem] md:items-start md:gap-6">
+      {/* Lịch các ngày trước: thu gọn được trên điện thoại, luôn mở bên phải trên máy tính. */}
+      <aside className="md:sticky md:top-[4.5rem] md:col-start-2 md:row-start-1">
+        <button
+          type="button"
+          onClick={() => setCalOpen((v) => !v)}
+          aria-expanded={calOpen}
+          className={`${card} flex w-full items-center gap-2.5 px-3.5 py-2.5 text-left text-sm font-medium text-slate-700 transition hover:border-slate-300 active:scale-[.99] md:hidden`}
+        >
+          <CalendarIcon className="h-[18px] w-[18px] text-slate-500" />
+          <span className="flex-1">Xem lại những ngày trước</span>
+          <ChevronRightIcon className={`h-4 w-4 text-slate-400 transition-transform duration-300 ${calOpen ? "rotate-90" : ""}`} />
+        </button>
+        <div
+          className={`grid transition-[grid-template-rows,opacity,visibility] duration-300 ease-out md:visible md:grid-rows-[1fr] md:opacity-100 ${
+            calOpen ? "visible grid-rows-[1fr] opacity-100" : "invisible grid-rows-[0fr] opacity-0"
+          }`}
+        >
+          <div className="min-h-0 overflow-hidden">
+            <div className={`${card} mt-2 p-3 md:mt-0`}>
+              <ForumCalendar today={today} mine={mine} version={version} activeDay={openDay} onPick={pickDay} />
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <div ref={feedRef} className="min-w-0 scroll-mt-20 space-y-3 md:col-start-1 md:row-start-1">
+        <div className="flex items-end justify-between gap-3">
+          <div className="min-w-0">
+            <h2 className="text-lg font-semibold leading-tight tracking-tight text-slate-950">Hôm nay</h2>
+            <p className="truncate text-xs text-slate-500">
+              {formatDayLong(today)}
+              {count && ` · ${count}`}
+            </p>
+          </div>
+          <div className="flex shrink-0 items-center gap-2">
+            <Segmented value={mine} onChange={setMine} />
+            <button
+              type="button"
+              onClick={refresh}
+              aria-label="Làm mới"
+              title="Làm mới"
+              className="grid h-8 w-8 place-items-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 active:scale-90"
+            >
+              <RefreshIcon key={version} className={`h-4 w-4 ${version > 0 ? "spin-once" : ""}`} />
+            </button>
+          </div>
+        </div>
+
         <button
           type="button"
           onClick={() => setComposing(true)}
           disabled={profile.blocked}
-          className="flex min-w-0 flex-1 items-center gap-3 rounded-2xl border border-slate-200 bg-white p-3 text-left shadow-sm transition hover:border-slate-300 disabled:cursor-not-allowed disabled:opacity-50"
+          className={`${card} group flex w-full items-center gap-2.5 p-2 pr-3 text-left transition duration-200 hover:border-slate-300 hover:shadow-[0_8px_28px_-14px_rgba(0,0,0,.22)] active:scale-[.99] disabled:cursor-not-allowed disabled:opacity-50`}
         >
-          <ForumAvatar avatar={profile.avatar} size={36} />
-          <span className="truncate text-sm text-slate-500">Viết bài mới…</span>
+          <ForumAvatar avatar={profile.avatar} size={32} />
+          <span className="flex-1 truncate text-sm text-slate-400">Viết bài mới…</span>
+          <span className="grid h-7 w-7 place-items-center rounded-full bg-black text-white transition-transform duration-300 group-hover:rotate-90">
+            <PlusIcon className="h-4 w-4" />
+          </span>
         </button>
-        <button
-          type="button"
-          onClick={() => setVersion((v) => v + 1)}
-          aria-label="Làm mới"
-          title="Làm mới"
-          className="grid h-[60px] w-[60px] shrink-0 place-items-center rounded-2xl border border-slate-200 bg-white text-slate-600 shadow-sm transition hover:bg-slate-50"
-        >
-          <RefreshIcon className="h-5 w-5" />
-        </button>
-      </div>
 
-      <div role="tablist" className="flex gap-2">
-        {[
-          { value: false, label: "Tất cả" },
-          { value: true, label: "Bài của tôi" },
-        ].map((tab) => (
-          <button
-            key={tab.label}
-            type="button"
-            role="tab"
-            aria-selected={mine === tab.value}
-            onClick={() => setMine(tab.value)}
-            className={`rounded-full px-4 py-1.5 text-sm font-medium transition ${
-              mine === tab.value ? "bg-black text-white" : "border border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-            }`}
-          >
-            {tab.label}
-          </button>
-        ))}
-      </div>
+        {list.error && <FormMessage kind="error">{list.error}</FormMessage>}
 
-      {error && <FormMessage kind="error">{error}</FormMessage>}
-
-      {first.status === "loading" && (
-        <div className="space-y-4" aria-busy="true">
-          {[0, 1, 2].map((i) => (
-            <div key={i} className="h-36 animate-pulse rounded-2xl bg-slate-100" />
-          ))}
-        </div>
-      )}
-      {first.status === "error" && <ErrorState />}
-      {first.status === "success" && items.length === 0 && <EmptyState title={mine ? "Bạn chưa đăng bài nào" : "Chưa có bài viết nào"} />}
-
-      {items.map((post) => (
-        <article key={post.id} className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm transition hover:border-slate-300 sm:p-5">
-          <div className="flex items-center gap-3">
-            <ForumAvatar avatar={post.avatar} size={40} />
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-sm font-semibold text-slate-950">{post.display_name}</p>
-              <p className="text-xs text-slate-500">{timeAgo(post.created_at)}</p>
-            </div>
-            {post.is_mine && (
+        {list.status === "loading" && (
+          <div className="space-y-3" aria-busy="true">
+            {[0, 1, 2].map((i) => (
+              <div key={i} className="shimmer h-[7.5rem] rounded-2xl" />
+            ))}
+          </div>
+        )}
+        {list.status === "error" && <ErrorState />}
+        {list.status === "success" && list.items.length === 0 && (
+          <div className="post-in rounded-2xl border border-dashed border-slate-300 bg-white/60 px-5 py-9 text-center">
+            <p className="text-sm font-semibold text-slate-900">{mine ? "Hôm nay bạn chưa đăng bài" : "Hôm nay chưa có bài nào"}</p>
+            <p className="mt-1 text-xs text-slate-500">Bài của những ngày trước nằm trong lịch.</p>
+            {!profile.blocked && (
               <button
                 type="button"
-                onClick={() => remove(post)}
-                aria-label="Xóa bài viết"
-                title="Xóa bài viết"
-                className="grid h-9 w-9 place-items-center rounded-lg text-slate-400 transition hover:bg-red-50 hover:text-red-600"
+                onClick={() => setComposing(true)}
+                className="mt-4 inline-flex items-center gap-1.5 rounded-full bg-black px-4 py-2 text-sm font-medium text-white transition hover:bg-neutral-800 active:scale-95"
               >
-                <TrashIcon className="h-[18px] w-[18px]" />
+                <PlusIcon className="h-4 w-4" />
+                Viết bài
               </button>
             )}
           </div>
-          <Link href={`/forum/post/?id=${post.id}`} className="mt-3 block">
-            <h2 className="break-words text-base font-semibold text-slate-950">{post.title}</h2>
-            <p className="mt-1 line-clamp-3 whitespace-pre-line break-words text-sm text-slate-600">{post.excerpt}</p>
-          </Link>
-          <div className="mt-3 flex items-center justify-between gap-3 border-t border-slate-100 pt-2">
-            <ReactionBar
-              key={`${post.id}:${JSON.stringify(post.reactions)}:${post.my_reaction ?? ""}`}
-              target="post"
-              id={post.id}
-              reactions={post.reactions}
-              mine={post.my_reaction}
-              disabled={profile.blocked}
-            />
-            <Link
-              href={`/forum/post/?id=${post.id}`}
-              className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-sm text-slate-500 transition hover:bg-slate-100 hover:text-black"
-            >
-              <ChatIcon className="h-4 w-4" />
-              {post.comment_count}
-            </Link>
-          </div>
-        </article>
-      ))}
+        )}
 
-      {hasMore && (
-        <div className="flex justify-center pt-2">
-          <button type="button" onClick={loadMore} disabled={loadingMore} className={secondaryButton}>
-            {loadingMore ? "Đang tải…" : "Xem thêm"}
-          </button>
-        </div>
-      )}
+        {list.items.map((post, index) => (
+          <ForumPostCard key={post.id} post={post} index={index} blocked={profile.blocked} onDelete={remove} />
+        ))}
+
+        {list.hasMore && (
+          <div className="flex justify-center pt-1">
+            <button
+              type="button"
+              onClick={() => void list.loadMore()}
+              disabled={list.loadingMore}
+              className="rounded-full bg-slate-100 px-4 py-2 text-sm font-medium text-slate-700 transition hover:bg-slate-200 active:scale-95 disabled:opacity-50"
+            >
+              {list.loadingMore ? "Đang tải…" : "Xem thêm"}
+            </button>
+          </div>
+        )}
+      </div>
 
       <Modal open={composing} onClose={() => setComposing(false)} title="Bài viết mới">
         <ComposeForm
           onPosted={() => {
             setComposing(false);
-            setVersion((v) => v + 1);
+            refresh();
           }}
         />
       </Modal>
-    </>
+
+      {openDay && <DaySheet day={openDay} mine={mine} blocked={profile.blocked} onClose={() => setOpenDay(null)} onChanged={refresh} />}
+    </div>
+  );
+}
+
+/** Công tắc Tất cả / Của tôi, nền trượt theo lựa chọn. */
+function Segmented({ value, onChange }: { value: boolean; onChange: (mine: boolean) => void }) {
+  const tabs = [
+    { value: false, label: "Tất cả" },
+    { value: true, label: "Của tôi" },
+  ];
+  return (
+    <div role="tablist" className="relative grid h-8 grid-cols-2 rounded-full bg-slate-100 p-0.5 text-xs font-medium">
+      <span
+        aria-hidden="true"
+        className="absolute inset-y-0.5 left-0.5 w-[calc(50%-2px)] rounded-full bg-black shadow-sm transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)]"
+        style={{ transform: value ? "translateX(100%)" : "none" }}
+      />
+      {tabs.map((tab) => (
+        <button
+          key={tab.label}
+          type="button"
+          role="tab"
+          aria-selected={value === tab.value}
+          onClick={() => onChange(tab.value)}
+          className={`relative z-10 whitespace-nowrap px-3 transition-colors duration-300 ${value === tab.value ? "text-white" : "text-slate-600"}`}
+        >
+          {tab.label}
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -212,7 +236,7 @@ function ComposeForm({ onPosted }: { onPosted: () => void }) {
   }
 
   return (
-    <form onSubmit={submit} className="space-y-4">
+    <form onSubmit={submit} className="space-y-3">
       <input
         value={title}
         onChange={(e) => setTitle(e.target.value)}
@@ -226,7 +250,7 @@ function ComposeForm({ onPosted }: { onPosted: () => void }) {
         value={body}
         onChange={(e) => setBody(e.target.value)}
         maxLength={FORUM_POST_MAX}
-        rows={8}
+        rows={6}
         placeholder="Nội dung"
         aria-label="Nội dung"
         className={`${inputClass} resize-y`}

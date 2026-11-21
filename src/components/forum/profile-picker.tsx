@@ -39,16 +39,16 @@ export function ProfilePicker({
   }
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Xem trước nhân vật */}
-      <div className="relative overflow-hidden rounded-3xl bg-slate-950 px-6 py-7 text-white sm:px-8">
+      <div className="relative overflow-hidden rounded-3xl bg-slate-950 px-5 py-5 text-white sm:px-7">
         <div aria-hidden="true" className="pointer-events-none absolute -right-12 -top-12 h-48 w-48 rounded-full bg-white/10 blur-2xl" />
         <div aria-hidden="true" className="pointer-events-none absolute -bottom-16 -left-10 h-40 w-40 rounded-full bg-white/5 blur-2xl" />
         <div className="relative flex flex-col items-center gap-4 text-center sm:flex-row sm:text-left">
           <span className="rounded-full p-1.5 ring-2 ring-white/60">
-            <ForumAvatar avatar={avatar} size={96} />
+            <ForumAvatar avatar={avatar} size={72} />
           </span>
-          <p className={`min-w-0 break-words text-2xl font-semibold tracking-tight sm:text-3xl ${name ? "text-white" : "text-white/30"}`}>
+          <p className={`min-w-0 break-words text-xl font-semibold tracking-tight sm:text-2xl ${name ? "text-white" : "text-white/30"}`}>
             {name || "Tên nhân vật"}
           </p>
         </div>
@@ -91,7 +91,7 @@ export function ProfilePicker({
       {/* Avatar */}
       <section>
         <h3 className="mb-3 text-sm font-semibold text-slate-900">Avatar</h3>
-        <div className="grid grid-cols-4 gap-x-3 gap-y-4 sm:grid-cols-5">
+        <div className="grid grid-cols-4 gap-x-2 gap-y-3 sm:grid-cols-6">
           {ALL_AVATAR_KEYS.map((key, index) => {
             const selected = avatar === key;
             return (
@@ -105,7 +105,7 @@ export function ProfilePicker({
                   selected ? "ring-2 ring-black ring-offset-2" : "opacity-80 hover:scale-105 hover:opacity-100"
                 }`}
               >
-                <ForumAvatar avatar={key} size={72} />
+                <ForumAvatar avatar={key} size={60} />
                 {selected && (
                   <span className="absolute -bottom-0.5 -right-0.5 grid h-6 w-6 place-items-center rounded-full bg-black text-white ring-2 ring-white">
                     <CheckIcon className="h-3.5 w-3.5" />
@@ -122,7 +122,7 @@ export function ProfilePicker({
         type="button"
         onClick={submit}
         disabled={!name || busy}
-        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 px-5 py-3.5 text-base font-semibold text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
+        className="inline-flex w-full items-center justify-center gap-2 rounded-2xl bg-brand-600 px-5 py-3 text-sm font-semibold active:scale-[.98] text-white shadow-sm transition hover:bg-brand-700 disabled:cursor-not-allowed disabled:opacity-40"
       >
         {submitLabel}
         <ArrowRightIcon className="h-5 w-5" />
