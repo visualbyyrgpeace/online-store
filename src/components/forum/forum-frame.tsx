@@ -14,11 +14,11 @@ import { useQuery } from "@/hooks/use-query";
 import { getMyForumProfile, type ForumProfile } from "@/services/forum-service";
 
 /** Khung chung của diễn đàn: bắt buộc đăng nhập, lần đầu vào thì chọn nhân vật, có nút đổi nhân vật. */
-export function ForumFrame({ children }: { children: (profile: ForumProfile) => ReactNode }) {
-  return <AuthGate>{() => <ProfileGate>{children}</ProfileGate>}</AuthGate>;
+export function ForumFrame({ children, hideMusic = false }: { children: (profile: ForumProfile) => ReactNode; hideMusic?: boolean }) {
+  return <AuthGate>{() => <ProfileGate hideMusic={hideMusic}>{children}</ProfileGate>}</AuthGate>;
 }
 
-function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactNode }) {
+function ProfileGate({ children, hideMusic }: { children: (profile: ForumProfile) => ReactNode; hideMusic: boolean }) {
   const initial = useQuery("forum-profile", getMyForumProfile);
   const [saved, setSaved] = useState<ForumProfile | null>(null);
   const [editing, setEditing] = useState(false);
@@ -38,7 +38,7 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
             </span>
             <h1 className="truncate text-xl font-semibold tracking-tight text-slate-950">Giangho Forum</h1>
           </Link>
-          {profile && <ForumMusicBar />}
+          {profile && !hideMusic && <ForumMusicBar />}
         </div>
         {profile && (
           <button

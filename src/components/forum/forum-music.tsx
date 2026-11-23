@@ -662,7 +662,8 @@ const scrollbar = "[scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,.25)
  * - Thanh nhỏ: ảnh bìa, tên bài, nút Phát / Dừng. Bấm vào tên bài để mở bảng đầy đủ.
  * - Bảng đầy đủ: ảnh bìa lớn, thanh tiến trình, Phát / Dừng, Bài tiếp theo (ai cũng bấm được), âm lượng, thêm bài và danh sách chờ.
  */
-export function ForumMusicBar() {
+export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "inline" }) {
+  const inline = layout === "inline";
   const music = useContext(MusicContext);
   const [open, setOpen] = useState(false);
   const [link, setLink] = useState("");
@@ -676,7 +677,7 @@ export function ForumMusicBar() {
 
   // Bấm ra ngoài hoặc nhấn Esc thì đóng bảng.
   useEffect(() => {
-    if (!open) return;
+    if (!open || inline) return;
     const onDown = (e: MouseEvent | TouchEvent) => {
       if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
     };
@@ -691,7 +692,7 @@ export function ForumMusicBar() {
       document.removeEventListener("touchstart", onDown);
       document.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, inline]);
 
   if (!music) return null;
   const { queue, ready, listening, engine, elsewhere, volume, muted } = music;
@@ -756,7 +757,7 @@ export function ForumMusicBar() {
   const playLabel = listening ? "Dừng phát" : "Phát nhạc";
 
   return (
-    <div ref={boxRef} className="relative w-[17.5rem] max-w-full">
+    <div ref={boxRef} className={inline ? "relative w-full" : "relative w-[17.5rem] max-w-full"}>
       <style>{MUSIC_CSS}</style>
 
       {/* Thanh nhỏ */}
@@ -807,7 +808,11 @@ export function ForumMusicBar() {
       {open && (
         <section
           aria-label="Trình phát nhạc"
-          className="post-in absolute left-0 top-full z-30 mt-2 w-[min(21rem,calc(100vw-2rem))] overflow-hidden rounded-3xl bg-neutral-950 p-4 text-white shadow-[0_28px_70px_-18px_rgba(0,0,0,.6)] ring-1 ring-white/10"
+          className={`post-in overflow-hidden rounded-3xl bg-neutral-950 p-4 text-white ring-1 ring-white/10 ${
+            inline
+              ? "relative mt-2 w-full shadow-[0_10px_26px_-14px_rgba(0,0,0,.6)]"
+              : "absolute left-0 top-full z-30 mt-2 w-[min(21rem,calc(100vw-2rem))] shadow-[0_28px_70px_-18px_rgba(0,0,0,.6)]"
+          }`}
         >
           {current && (
             // eslint-disable-next-line @next/next/no-img-element

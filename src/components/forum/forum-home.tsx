@@ -4,6 +4,7 @@ import { useRef, useState, type FormEvent } from "react";
 import { DaySheet, ForumCalendar } from "@/components/forum/forum-calendar";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { ForumFrame } from "@/components/forum/forum-frame";
+import { ForumMusicBar } from "@/components/forum/forum-music";
 import { SendIcon } from "@/components/forum/forum-icons";
 import { ForumPostCard } from "@/components/forum/forum-post-card";
 import { FormMessage, inputClass, primaryButton } from "@/components/ui/form";
@@ -23,7 +24,11 @@ import {
 } from "@/services/forum-service";
 
 export function ForumHome() {
-  return <ForumFrame>{(profile) => <Feed profile={profile} />}</ForumFrame>;
+  return (
+    <ForumFrame hideMusic>
+      {(profile) => <Feed profile={profile} />}
+    </ForumFrame>
+  );
 }
 
 const card = "rounded-2xl border border-slate-200/80 bg-white";
@@ -66,7 +71,7 @@ function Feed({ profile }: { profile: ForumProfile }) {
   return (
     <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_17.5rem] md:items-start md:gap-6">
       {/* Lịch các ngày trước: thu gọn được trên điện thoại, luôn mở bên phải trên máy tính. */}
-      <aside className="md:sticky md:top-[4.5rem] md:col-start-2 md:row-start-1">
+      <aside className="md:sticky md:top-[4.5rem] md:col-start-2 md:row-start-1 md:max-h-[calc(100vh-5.5rem)] md:overflow-y-auto md:[scrollbar-width:none]">
         <button
           type="button"
           onClick={() => setCalOpen((v) => !v)}
@@ -87,6 +92,10 @@ function Feed({ profile }: { profile: ForumProfile }) {
               <ForumCalendar today={today} mine={mine} version={version} activeDay={openDay} onPick={pickDay} />
             </div>
           </div>
+        </div>
+        {/* Trình phát nhạc nằm ngay dưới lịch cho gọn. */}
+        <div className="mt-3">
+          <ForumMusicBar layout="inline" />
         </div>
       </aside>
 
