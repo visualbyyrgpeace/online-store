@@ -404,15 +404,26 @@ const SkipIcon = ({ className }: { className?: string }) => (
   </Svg>
 );
 
-function Thumb({ videoId, size, playing = false }: { videoId: string; size: number; playing?: boolean }) {
+/** Ảnh bìa bài hát dạng chiếc đĩa: xoay đều khi có bài đang phát, có lỗ tròn ở giữa. */
+function Disc({ videoId, size, spinning }: { videoId: string | null; size: number; spinning: boolean }) {
   const [failed, setFailed] = useState(false);
+  const hole = Math.max(6, Math.round(size / 5));
   return (
-    <span style={{ width: size, height: size }} className="relative block shrink-0 overflow-hidden rounded-xl bg-slate-100">
-      {!failed && (
+    <span
+      aria-hidden="true"
+      style={{ width: size, height: size, animation: spinning ? "forum-disc 7s linear infinite" : undefined }}
+      className="relative block shrink-0 overflow-hidden rounded-full bg-slate-800 p-[2px] shadow-[0_0_0_1px_rgba(0,0,0,.08)]"
+    >
+      <style>{"@keyframes forum-disc{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){[style*='forum-disc']{animation:none!important}}"}</style>
+      {videoId && !failed ? (
         // eslint-disable-next-line @next/next/no-img-element
-        <img src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`} alt="" draggable={false} onError={() => setFailed(true)} className="h-full w-full object-cover" />
+        <img src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`} alt="" draggable={false} onError={() => setFailed(true)} className="h-full w-full rounded-full object-cover" />
+      ) : (
+        <span className="grid h-full w-full place-items-center rounded-full bg-slate-200 text-slate-500">
+          <MusicIcon className="h-[45%] w-[45%]" />
+        </span>
       )}
-      {playing && <span className="absolute bottom-1 right-1 h-1.5 w-1.5 animate-pulse rounded-full bg-white shadow-[0_0_0_1px_rgba(0,0,0,.35)]" />}
+      <span style={{ width: hole, height: hole }} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-slate-800 bg-slate-100" />
     </span>
   );
 }
@@ -439,13 +450,33 @@ function Progress({ duration, positionMs }: { duration: number | null; positionM
 const iconButton =
   "grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 active:scale-90";
 
-/** Thanh nhạc nhỏ gọn đặt đầu trang diễn đàn: bài đang phát, ô dán link và danh sách chờ. */
+/** Ô nhạc vuông nhỏ đặt dưới khung nhân vật: bấm để mở bảng bài đang phát, ô dán link và danh sách chờ. */
 export function ForumMusicBar() {
   const music = useContext(MusicContext);
+  const [open, setOpen] = useState(false);
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [listOpen, setListOpen] = useState(true);
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Bấm ra ngoài hoặc nhấn Esc thì đóng bảng.
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent | TouchEvent) => {
+      if (boxRef.current && !boxRef.current.contains(e.target as Node)) setOpen(false);
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setOpen(false);
+    };
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("touchstart", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("touchstart", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   if (!music) return null;
   const { current, queue, muted, ready } = music;
@@ -477,126 +508,125 @@ export function ForumMusicBar() {
   }
 
   return (
-    <section aria-label="Nhạc" className="rounded-2xl border border-slate-200/80 bg-white p-2.5">
-      <div className="flex items-center gap-2.5">
-        {current ? (
-          <Thumb key={current.id} videoId={current.video_id} size={40} playing />
-        ) : (
-          <span className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-slate-100 text-slate-500">
-            <MusicIcon className="h-[18px] w-[18px]" />
-          </span>
-        )}
-        <div className="min-w-0 flex-1">
+    <div ref={boxRef} className="relative">
+      {/* Ô nhạc dưới khung nhân vật: đĩa xoay + tên bài + người mở. Chấm nhỏ ở đĩa là nút bật/tắt tiếng. */}
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        aria-expanded={open}
+        aria-label="Nhạc"
+        title={current ? current.title : "Nhạc"}
+        className="flex w-[11rem] max-w-full items-center gap-2 rounded-full bg-slate-100 py-1 pl-1 pr-3 text-left transition hover:bg-slate-200 active:scale-95"
+      >
+        <Disc key={current?.id ?? "none"} videoId={current?.video_id ?? null} size={36} spinning={!!current} />
+        <span className="min-w-0 flex-1">
+          <span className="block truncate text-[12px] font-medium leading-tight text-slate-900">{current ? current.title : ready ? "Chưa có bài nào" : "Đang tải..."}</span>
+          {current && <span className="mt-0.5 block truncate text-[11px] leading-tight text-slate-500">Mở bởi {current.display_name}</span>}
+        </span>
+      </button>
+      <button
+        type="button"
+        onClick={music.toggleMute}
+        aria-label={muted ? "Bật tiếng" : "Tắt tiếng"}
+        title={muted ? "Bật tiếng" : "Tắt tiếng"}
+        aria-pressed={!muted}
+        className={`absolute bottom-0 left-[27px] grid h-[18px] w-[18px] place-items-center rounded-full border transition active:scale-90 ${
+          muted ? "border-black bg-black text-white" : "border-slate-300 bg-white text-slate-700"
+        }`}
+      >
+        {muted ? <VolumeOffIcon className="h-2.5 w-2.5" /> : <VolumeIcon className="h-2.5 w-2.5" />}
+      </button>
+
+      {open && (
+        <section
+          aria-label="Nhạc"
+          className="post-in absolute left-0 top-full z-30 mt-2 w-[min(19rem,calc(100vw-2rem))] rounded-2xl border border-slate-200/80 bg-white p-2.5 shadow-[0_12px_32px_-12px_rgba(0,0,0,.25)]"
+        >
           {current ? (
-            <>
-              <p className="truncate text-[13px] font-medium leading-tight text-slate-900" title={current.title}>
-                {current.title}
-              </p>
-              <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
-                <ForumAvatar avatar={current.avatar} size={14} />
-                <span className="truncate">Mở bởi {current.display_name}</span>
-              </p>
-            </>
+            <div className="flex items-center gap-2">
+              <div className="min-w-0 flex-1">
+                <p className="truncate text-[13px] font-medium leading-tight text-slate-900" title={current.title}>
+                  {current.title}
+                </p>
+                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
+                  <ForumAvatar avatar={current.avatar} size={14} />
+                  <span className="truncate">Mở bởi {current.display_name}</span>
+                </p>
+                <div className="mt-2">
+                  <Progress key={current.id} duration={current.duration_seconds} positionMs={music.positionMs} />
+                </div>
+              </div>
+              {current.can_remove && (
+                <button type="button" onClick={() => void drop(current)} aria-label="Bỏ qua bài này" title="Bỏ qua bài này" className={iconButton}>
+                  <SkipIcon className="h-4 w-4" />
+                </button>
+              )}
+            </div>
           ) : (
             <p className="text-[13px] text-slate-500">{ready ? "Chưa có bài nào" : "Đang tải..."}</p>
           )}
-        </div>
-        {current?.can_remove && (
-          <button type="button" onClick={() => void drop(current)} aria-label="Bỏ qua bài này" title="Bỏ qua bài này" className={iconButton}>
-            <SkipIcon className="h-4 w-4" />
-          </button>
-        )}
-        <button
-          type="button"
-          onClick={music.toggleMute}
-          aria-label={muted ? "Bật tiếng" : "Tắt tiếng"}
-          title={muted ? "Bật tiếng" : "Tắt tiếng"}
-          aria-pressed={!muted}
-          className={`grid h-8 w-8 shrink-0 place-items-center rounded-full transition active:scale-90 ${
-            muted ? "bg-black text-white hover:bg-slate-800" : "bg-slate-100 text-slate-600 hover:bg-slate-200"
-          }`}
-        >
-          {muted ? <VolumeOffIcon className="h-4 w-4" /> : <VolumeIcon className="h-4 w-4" />}
-        </button>
-      </div>
 
-      {current && (
-        <div className="mt-2">
-          <Progress key={current.id} duration={current.duration_seconds} positionMs={music.positionMs} />
-        </div>
-      )}
-
-      <form onSubmit={submit} className="mt-2.5 flex items-center gap-2">
-        <input
-          value={link}
-          onChange={(e) => setLink(e.target.value)}
-          type="url"
-          inputMode="url"
-          placeholder="Link YouTube"
-          aria-label="Link YouTube"
-          maxLength={300}
-          className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-[13px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-black focus:ring-4 focus:ring-black/10"
-        />
-        <button
-          type="submit"
-          disabled={busy || !link.trim()}
-          aria-label="Thêm bài"
-          title="Thêm bài"
-          className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-black text-white transition hover:bg-slate-800 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
-        >
-          {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <PlusIcon className="h-4 w-4" />}
-        </button>
-      </form>
-      {error && (
-        <p role="alert" className="mt-1.5 text-xs text-red-600">
-          {error}
-        </p>
-      )}
-
-      {queue.length > 0 && (
-        <div className="mt-2 border-t border-slate-100 pt-2">
-          <button
-            type="button"
-            onClick={() => setListOpen((v) => !v)}
-            aria-expanded={listOpen}
-            className="flex w-full items-center justify-between text-xs font-medium text-slate-500 transition hover:text-slate-800"
-          >
-            <span>Danh sách chờ · {queue.length}</span>
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={`h-4 w-4 transition-transform duration-300 ${listOpen ? "rotate-180" : ""}`}>
-              <path d="m6 9 6 6 6-6" />
-            </svg>
-          </button>
-          {listOpen && (
-            <ul className="mt-1.5 max-h-40 space-y-1 overflow-y-auto">
-              {queue.map((track, index) => (
-                <li key={track.id} className="post-in flex items-center gap-2 rounded-xl px-1 py-1 hover:bg-slate-50">
-                  <span className="w-4 shrink-0 text-center text-[11px] tabular-nums text-slate-400">{index + 1}</span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] leading-tight text-slate-800" title={track.title}>
-                      {track.title}
-                    </p>
-                    <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                      <ForumAvatar avatar={track.avatar} size={12} />
-                      <span className="truncate">Mở bởi {track.display_name}</span>
-                    </p>
-                  </div>
-                  {track.can_remove && (
-                    <button
-                      type="button"
-                      onClick={() => void drop(track)}
-                      aria-label="Xóa khỏi danh sách"
-                      title="Xóa khỏi danh sách"
-                      className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 active:scale-90"
-                    >
-                      <CloseIcon className="h-3.5 w-3.5" />
-                    </button>
-                  )}
-                </li>
-              ))}
-            </ul>
+          <form onSubmit={submit} className="mt-2.5 flex items-center gap-2">
+            <input
+              value={link}
+              onChange={(e) => setLink(e.target.value)}
+              type="url"
+              inputMode="url"
+              placeholder="Link YouTube"
+              aria-label="Link YouTube"
+              maxLength={300}
+              className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-[13px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-black focus:ring-4 focus:ring-black/10"
+            />
+            <button
+              type="submit"
+              disabled={busy || !link.trim()}
+              aria-label="Thêm bài"
+              title="Thêm bài"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-black text-white transition hover:bg-slate-800 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <PlusIcon className="h-4 w-4" />}
+            </button>
+          </form>
+          {error && (
+            <p role="alert" className="mt-1.5 text-xs text-red-600">
+              {error}
+            </p>
           )}
-        </div>
+
+          {queue.length > 0 && (
+            <div className="mt-2 border-t border-slate-100 pt-2">
+              <p className="mb-1 text-xs font-medium text-slate-500">Danh sách chờ · {queue.length}</p>
+              <ul className="max-h-40 space-y-1 overflow-y-auto">
+                {queue.map((track, index) => (
+                  <li key={track.id} className="flex items-center gap-2 rounded-xl px-1 py-1 hover:bg-slate-50">
+                    <span className="w-4 shrink-0 text-center text-[11px] tabular-nums text-slate-400">{index + 1}</span>
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-[13px] leading-tight text-slate-800" title={track.title}>
+                        {track.title}
+                      </p>
+                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
+                        <ForumAvatar avatar={track.avatar} size={12} />
+                        <span className="truncate">Mở bởi {track.display_name}</span>
+                      </p>
+                    </div>
+                    {track.can_remove && (
+                      <button
+                        type="button"
+                        onClick={() => void drop(track)}
+                        aria-label="Xóa khỏi danh sách"
+                        title="Xóa khỏi danh sách"
+                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 active:scale-90"
+                      >
+                        <CloseIcon className="h-3.5 w-3.5" />
+                      </button>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </section>
       )}
-    </section>
+    </div>
   );
 }

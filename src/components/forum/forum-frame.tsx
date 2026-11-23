@@ -30,13 +30,16 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
 
   return (
     <div className="mx-auto w-full max-w-4xl">
-      <div className="mb-4 flex items-center justify-between gap-3">
-        <Link href="/forum/" className="group flex min-w-0 items-center gap-2.5">
-          <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-black text-white transition-transform duration-300 group-hover:-rotate-6 group-active:scale-90">
-            <ChatIcon className="h-[18px] w-[18px]" />
-          </span>
-          <h1 className="truncate text-xl font-semibold tracking-tight text-slate-950">Giangho Forum</h1>
-        </Link>
+      <div className="mb-4 flex items-start justify-between gap-3">
+        <div className="flex min-w-0 flex-col items-start gap-2">
+          <Link href="/forum/" className="group flex min-w-0 items-center gap-2.5">
+            <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-black text-white transition-transform duration-300 group-hover:-rotate-6 group-active:scale-90">
+              <ChatIcon className="h-[18px] w-[18px]" />
+            </span>
+            <h1 className="truncate text-xl font-semibold tracking-tight text-slate-950">Giangho Forum</h1>
+          </Link>
+          {profile && <ForumMusicBar />}
+        </div>
         {profile && (
           <button
             type="button"
@@ -53,7 +56,6 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
 
       {profile ? (
         <div className="space-y-3">
-          <ForumMusicBar />
           {profile.blocked && <FormMessage kind="error">Tài khoản của bạn đã bị chặn đăng bài và bình luận.</FormMessage>}
           {/* Đổi tên / avatar xong thì nội dung bên dưới tải lại để hiện đúng nhân vật mới. */}
           <Fragment key={`${profile.display_name}|${profile.avatar}`}>{children(profile)}</Fragment>
