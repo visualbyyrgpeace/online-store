@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
-import { ChevronDownIcon, CloseIcon, PlusIcon } from "@/components/utilities/tool-icons";
+import { ChevronDownIcon, CloseIcon, PlusIcon, RefreshIcon } from "@/components/utilities/tool-icons";
 import { useAuth } from "@/hooks/use-auth";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -129,6 +129,8 @@ type MusicState = {
   remove: (id: string) => Promise<void>;
   /** Chuyển bài đang phát sang bài kế: áp dụng cho cả phòng, ai cũng bấm được. */
   skip: () => Promise<void>;
+  /** Vào lại đúng giây hiện tại của phòng (khi nghe bị lệch / trễ so với máy khác). */
+  resync: () => Promise<void>;
 };
 const MusicContext = createContext<MusicState | null>(null);
 
@@ -500,6 +502,13 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
     broadcast();
   }, [refresh, broadcast]);
 
+  const resync = useCallback(async () => {
+    if (!listeningRef.current) return;
+    await refresh();
+    loadedRef.current = null;
+    syncPlayer();
+  }, [refresh, syncPlayer]);
+
   const value = useMemo<MusicState>(
     () => ({
       ready,
@@ -517,8 +526,9 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
       add,
       remove,
       skip,
+      resync,
     }),
-    [ready, tracks, listening, engine, elsewhere, volume, muted, togglePlay, toggleMute, setVolume, positionMs, add, remove, skip],
+    [ready, tracks, listening, engine, elsewhere, volume, muted, togglePlay, toggleMute, setVolume, positionMs, add, remove, skip, resync],
   );
 
   return (
@@ -663,13 +673,14 @@ const scrollbar = "[scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,.25)
  * - Thanh nhỏ: ảnh bìa, tên bài, nút Phát / Dừng. Bấm vào tên bài để mở bảng đầy đủ.
  * - Bảng đầy đủ: ảnh bìa lớn, thanh tiến trình, Phát / Dừng, Bài tiếp theo (ai cũng bấm được), âm lượng, thêm bài và danh sách chờ.
  */
-export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "inline" }) {
+export function ForumMusicBar({ layout = "popover", onOpenChange }: { layout?: "popover" | "inline"; onOpenChange?: (open: boolean) => void }) {
   const inline = layout === "inline";
   const music = useContext(MusicContext);
   const [open, setOpen] = useState(false);
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
   const [skipping, setSkipping] = useState(false);
+  const [syncing, setSyncing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
 
@@ -677,6 +688,10 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
   const pos = useRoomPosition(music?.positionMs ?? noPosition, !!current);
 
   // Bấm ra ngoài hoặc nhấn Esc thì đóng bảng.
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
+
   useEffect(() => {
     if (!open || inline) return;
     const onDown = (e: MouseEvent | TouchEvent) => {
@@ -729,6 +744,16 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
     } catch (err) {
       console.error(err);
       setError(musicErrorMessage(err));
+    }
+  }
+
+  async function resyncNow() {
+    if (syncing) return;
+    setSyncing(true);
+    try {
+      await music!.resync();
+    } finally {
+      setTimeout(() => setSyncing(false), 600);
     }
   }
 
@@ -797,7 +822,7 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
       {open && (
         <section
           aria-label="Trình phát nhạc"
-          className={`post-in overflow-hidden rounded-3xl bg-neutral-950 p-4 text-white ring-1 ring-white/10 ${
+          className={`post-in overflow-hidden rounded-3xl bg-neutral-950 p-3 text-white ring-1 ring-white/10 ${
             inline
               ? "relative mt-2 w-full shadow-[0_10px_26px_-14px_rgba(0,0,0,.6)]"
               : "absolute left-0 top-full z-30 mt-2 w-[min(21rem,calc(100vw-2rem))] shadow-[0_28px_70px_-18px_rgba(0,0,0,.6)]"
@@ -818,37 +843,47 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
               <CloseIcon className="h-3.5 w-3.5" />
             </button>
 
-            <Disc key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} spinning={playing} className="mx-auto mt-1 h-44 w-44 shadow-[0_18px_40px_-12px_rgba(0,0,0,.8)]" />
+            <Disc key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} spinning={playing} className="mx-auto h-24 w-24 shadow-[0_12px_28px_-10px_rgba(0,0,0,.8)]" />
 
-            <div className="mt-5 min-h-[3.25rem] text-center">
+            <div className="mt-3 text-center">
               {current ? (
                 <>
-                  <p className="line-clamp-2 text-[17px] font-semibold leading-snug tracking-tight" title={current.title}>
+                  <p className="line-clamp-2 text-sm font-semibold leading-snug" title={current.title}>
                     {current.title}
                   </p>
-                  <p className="mt-1.5 flex items-center justify-center gap-1.5 text-[13px] text-white/60">
-                    <ForumAvatar avatar={current.avatar} size={16} />
+                  <p className="mt-1 flex items-center justify-center gap-1.5 text-xs text-white/60">
+                    <ForumAvatar avatar={current.avatar} size={14} />
                     <span className="truncate">Mở bởi {current.display_name}</span>
                   </p>
                 </>
               ) : (
-                <p className="text-[17px] font-semibold tracking-tight">{ready ? "Chưa có bài nào" : "Đang tải..."}</p>
+                <p className="text-sm font-semibold">{ready ? "Chưa có bài nào" : "Đang tải..."}</p>
               )}
             </div>
 
             {/* Tiến trình của bài trong phòng */}
-            <div className="mt-3">
+            <div className="mt-2.5">
               <div className="h-1 overflow-hidden rounded-full bg-white/15" aria-hidden="true">
                 <div className="h-full rounded-full bg-white transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
               </div>
-              <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-white/50">
+              <div className="mt-1 flex justify-between text-[10px] tabular-nums text-white/50">
                 <span>{current ? formatTime(shownPos) : "0:00"}</span>
                 <span>{duration ? `-${formatTime(duration * 1000 - shownPos)}` : "--:--"}</span>
               </div>
             </div>
 
             {/* Điều khiển */}
-            <div className="mt-2 flex items-center justify-center gap-4">
+            <div className="mt-1.5 flex items-center justify-center gap-3">
+              <button
+                type="button"
+                onClick={() => void resyncNow()}
+                disabled={!current || !listening || syncing}
+                aria-label="Đồng bộ lại"
+                title="Đồng bộ lại"
+                className="grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <RefreshIcon className={`h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              </button>
               <button
                 type="button"
                 onClick={music.togglePlay}
@@ -856,9 +891,9 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
                 aria-label={playLabel}
                 title={playLabel}
                 aria-pressed={listening}
-                className="relative grid h-14 w-14 place-items-center rounded-full bg-white text-black shadow-[0_10px_24px_-8px_rgba(255,255,255,.35)] transition hover:scale-105 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+                className="relative grid h-12 w-12 place-items-center rounded-full bg-white text-black shadow-[0_8px_20px_-8px_rgba(255,255,255,.35)] transition hover:scale-105 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
               >
-                {listening ? <PauseGlyph className="h-6 w-6" /> : <PlayGlyph className="ml-1 h-6 w-6" />}
+                {listening ? <PauseGlyph className="h-5 w-5" /> : <PlayGlyph className="ml-0.5 h-5 w-5" />}
                 {loading && <span aria-hidden="true" className="absolute inset-[4px] rounded-full border-[3px] border-transparent border-t-black/55" style={{ animation: "fm-spin .8s linear infinite" }} />}
               </button>
               <button
@@ -867,23 +902,23 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
                 disabled={!current || skipping}
                 aria-label="Bài tiếp theo"
                 title="Bài tiếp theo"
-                className="grid h-11 w-11 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
+                className="grid h-9 w-9 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
-                {skipping ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <NextGlyph className="h-[18px] w-[18px]" />}
+                {skipping ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <NextGlyph className="h-4 w-4" />}
               </button>
             </div>
 
             {/* Âm lượng: chỉ ảnh hưởng máy của bạn */}
-            <div className="mt-3 flex items-center gap-2.5">
+            <div className="mt-1.5 flex items-center gap-2">
               <button
                 type="button"
                 onClick={music.toggleMute}
                 aria-label={silent ? "Bật tiếng" : "Tắt tiếng"}
                 title={silent ? "Bật tiếng" : "Tắt tiếng"}
                 aria-pressed={silent}
-                className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white active:scale-90"
+                className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white active:scale-90"
               >
-                <VolumeGlyph className="h-[18px] w-[18px]" />
+                <VolumeGlyph className="h-4 w-4" />
               </button>
               <input
                 type="range"
@@ -896,11 +931,11 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
                 className="fm-range min-w-0 flex-1"
                 style={{ "--v": `${silent ? 0 : volume}%` } as CSSProperties}
               />
-              <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-white/50">{silent ? 0 : volume}</span>
+              <span className="w-7 shrink-0 text-right text-[10px] tabular-nums text-white/50">{silent ? 0 : volume}</span>
             </div>
 
             {/* Thêm bài */}
-            <form onSubmit={submit} noValidate className="mt-4 flex items-center gap-2">
+            <form onSubmit={submit} noValidate className="mt-2.5 flex items-center gap-2">
               <input
                 value={link}
                 onChange={(e) => setLink(e.target.value)}
@@ -912,14 +947,14 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
                 placeholder="Link YouTube"
                 aria-label="Link YouTube"
                 maxLength={300}
-                className="h-10 min-w-0 flex-1 rounded-full bg-white/10 px-4 text-[13px] text-white outline-none transition placeholder:text-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/30"
+                className="h-9 min-w-0 flex-1 rounded-full bg-white/10 px-3.5 text-xs text-white outline-none transition placeholder:text-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/30"
               />
               <button
                 type="submit"
                 disabled={busy || !link.trim()}
                 aria-label="Thêm bài"
                 title="Thêm bài"
-                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-black transition hover:scale-105 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+                className="grid h-9 w-9 shrink-0 place-items-center rounded-full bg-white text-black transition hover:scale-105 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
               >
                 {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/30 border-t-black" /> : <PlusIcon className="h-4 w-4" />}
               </button>
@@ -932,19 +967,19 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
 
             {/* Danh sách chờ */}
             {queue.length > 0 && (
-              <div className="mt-4 border-t border-white/10 pt-3">
-                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/50">Tiếp theo · {queue.length}</p>
-                <ul className={`max-h-48 space-y-0.5 overflow-y-auto ${scrollbar}`}>
+              <div className="mt-3 border-t border-white/10 pt-2">
+                <p className="mb-1 text-[10px] font-semibold uppercase tracking-[0.14em] text-white/50">Tiếp theo · {queue.length}</p>
+                <ul className={`max-h-32 space-y-0.5 overflow-y-auto ${scrollbar}`}>
                   {queue.map((track, index) => (
-                    <li key={track.id} className="flex items-center gap-2.5 rounded-xl p-1.5 transition hover:bg-white/5">
+                    <li key={track.id} className="flex items-center gap-2 rounded-xl p-1 transition hover:bg-white/5">
                       <span className="w-4 shrink-0 text-center text-[11px] tabular-nums text-white/40">{index + 1}</span>
-                      <Disc videoId={track.video_id} className="h-10 w-10" />
+                      <Disc videoId={track.video_id} className="h-8 w-8" />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-medium leading-tight text-white" title={track.title}>
+                        <p className="truncate text-xs font-medium leading-tight text-white" title={track.title}>
                           {track.title}
                         </p>
-                        <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-white/50">
-                          <ForumAvatar avatar={track.avatar} size={12} />
+                        <p className="mt-0.5 flex items-center gap-1.5 text-[10px] text-white/50">
+                          <ForumAvatar avatar={track.avatar} size={11} />
                           <span className="truncate">Mở bởi {track.display_name}</span>
                         </p>
                       </div>

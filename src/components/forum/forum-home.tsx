@@ -43,6 +43,7 @@ function Feed({ profile }: { profile: ForumProfile }) {
   const [mine, setMine] = useState(false);
   const [composing, setComposing] = useState(false);
   const [calOpen, setCalOpen] = useState(false);
+  const [musicOpen, setMusicOpen] = useState(false);
   const [openDay, setOpenDay] = useState<string | null>(null);
   const feedRef = useRef<HTMLDivElement>(null);
   const list = useForumDayPosts(today, mine, version);
@@ -71,7 +72,7 @@ function Feed({ profile }: { profile: ForumProfile }) {
   return (
     <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_17.5rem] md:items-start md:gap-6">
       {/* Lịch các ngày trước: thu gọn được trên điện thoại, luôn mở bên phải trên máy tính. */}
-      <aside className="md:sticky md:top-[4.5rem] md:col-start-2 md:row-start-1 md:max-h-[calc(100vh-5.5rem)] md:overflow-y-auto md:[scrollbar-width:none]">
+      <aside className={`md:col-start-2 md:row-start-1 ${musicOpen ? "" : "md:sticky md:top-[4.5rem]"}`}>
         <button
           type="button"
           onClick={() => setCalOpen((v) => !v)}
@@ -95,7 +96,7 @@ function Feed({ profile }: { profile: ForumProfile }) {
         </div>
         {/* Trình phát nhạc nằm ngay dưới lịch cho gọn. */}
         <div className="mt-3">
-          <ForumMusicBar layout="inline" />
+          <ForumMusicBar layout="inline" onOpenChange={setMusicOpen} />
         </div>
       </aside>
 
