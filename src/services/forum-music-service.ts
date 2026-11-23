@@ -35,6 +35,8 @@ export async function listMusic(): Promise<MusicTrack[]> {
 export const addMusic = (videoId: string, title: string) => rpc<string>("forum_music_add", { p_video_id: videoId, p_title: title });
 export const nextMusic = (id: string) => rpc<void>("forum_music_next", { p_id: id });
 export const removeMusic = (id: string) => rpc<void>("forum_music_remove", { p_id: id });
+/** Bỏ qua bài đang phát: ai đăng nhập cũng bấm được (cần chạy file SQL 20261123000200_forum_music_skip.sql). */
+export const skipMusic = (id: string) => rpc<void>("forum_music_skip", { p_id: id });
 export const setMusicMeta = (id: string, duration: number | null, title: string) =>
   rpc<void>("forum_music_set_meta", { p_id: id, p_duration: duration, p_title: title });
 
@@ -92,5 +94,6 @@ export function musicErrorMessage(err: unknown): string {
   if (msg.includes("already_queued")) return "Bài này đang có trong danh sách.";
   if (msg.includes("queue_limit")) return "Bạn đang có 5 bài trong danh sách, hãy chờ bớt rồi thêm tiếp.";
   if (msg.includes("queue_full")) return "Danh sách chờ đã đầy.";
+  if (msg.includes("forum_music_skip")) return "Chưa bật được nút chuyển bài: cần chạy file SQL 20261123000200_forum_music_skip.sql trên Supabase.";
   return forumErrorMessage(err);
 }

@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { CloseIcon, PlusIcon } from "@/components/utilities/tool-icons";
 import { useAuth } from "@/hooks/use-auth";
@@ -15,6 +15,7 @@ import {
   parseYouTubeId,
   removeMusic,
   setMusicMeta,
+  skipMusic,
   type MusicTrack,
 } from "@/services/forum-music-service";
 
@@ -80,28 +81,62 @@ function loadYouTubeApi(): Promise<YTNamespace> {
   return apiPromise;
 }
 
-const SOUND_KEY = "forum-music-sound";
+const SOUND_KEY = "forum-music-sound"; // "on" = thiết bị này đang nghe, "off" = đã dừng
+const VOLUME_KEY = "forum-music-volume";
+const TAB_CHANNEL = "forum-music-tabs";
 const POLL_MS = 5000;
+const DRIFT_SECONDS = 2; // lệch quá ngần này so với phòng thì tua lại cho khớp (lệch lâu sẽ nghe như vọng tiếng)
+const UNSTARTED = -1;
+const ENDED = 0;
 const PLAYING = 1;
 const PAUSED = 2;
-const ENDED = 0;
+const BUFFERING = 3;
+const CUED = 5;
+
+function readStore(key: string): string | null {
+  try {
+    return window.localStorage.getItem(key);
+  } catch {
+    return null;
+  }
+}
+function writeStore(key: string, value: string) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch {
+    /* bỏ qua */
+  }
+}
+
+type Engine = "idle" | "loading" | "playing";
 
 type MusicState = {
   ready: boolean;
   current: MusicTrack | null;
   queue: MusicTrack[];
+  /** Thiết bị / tab này có đang nghe không (nút Phát / Dừng chỉ tác động lên máy của người bấm). */
+  listening: boolean;
+  engine: Engine;
+  /** Vừa bị tab khác của cùng trình duyệt giành phát tiếng. */
+  elsewhere: boolean;
+  volume: number;
   muted: boolean;
+  togglePlay: () => void;
   toggleMute: () => void;
+  setVolume: (value: number) => void;
   positionMs: () => number;
   add: (link: string) => Promise<void>;
   remove: (id: string) => Promise<void>;
+  /** Chuyển bài đang phát sang bài kế: áp dụng cho cả phòng, ai cũng bấm được. */
+  skip: () => Promise<void>;
 };
 const MusicContext = createContext<MusicState | null>(null);
 
 /**
  * Giữ trình phát ở cấp layout của /forum nên nhạc không bị ngắt khi chuyển giữa trang chủ và bài viết.
- * Cách đồng bộ: server lưu giờ bắt đầu của bài đang phát; mỗi máy tự tính vị trí hiện tại và tua về cho khớp.
- * Trình phát luôn khởi động ở chế độ tắt tiếng (trình duyệt cho phép), bấm nút loa để nghe.
+ * Đồng bộ: server lưu giờ bắt đầu của bài đang phát; mỗi máy tự tính vị trí hiện tại và tua về cho khớp.
+ * Chỉ máy / tab nào bấm Phát mới tải và phát video; bấm Dừng là dừng hẳn (không tải nữa).
+ * Mỗi trình duyệt chỉ có MỘT tab phát tiếng: tab bấm Phát sau cùng giành quyền, các tab khác tự dừng (hết chồng tiếng).
  */
 export function ForumMusicProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
@@ -109,7 +144,11 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
 
   const [ready, setReady] = useState(false);
   const [tracks, setTracks] = useState<MusicTrack[]>([]);
-  const [muted, setMuted] = useState(true);
+  const [listening, setListening] = useState(false);
+  const [engine, setEngine] = useState<Engine>("idle");
+  const [elsewhere, setElsewhere] = useState(false);
+  const [volume, setVolumeState] = useState(80);
+  const [muted, setMuted] = useState(false);
 
   const hostRef = useRef<HTMLDivElement>(null);
   const playerRef = useRef<YTPlayer | null>(null);
@@ -119,7 +158,11 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
   const tracksRef = useRef<MusicTrack[]>([]);
   const signatureRef = useRef("");
   const anchorRef = useRef({ at: 0, elapsed: 0 });
-  const mutedRef = useRef(true);
+  const listeningRef = useRef(false);
+  const volumeRef = useRef(80);
+  const mutedRef = useRef(false);
+  const tabIdRef = useRef("");
+  const tabChannelRef = useRef<BroadcastChannel | null>(null);
   const channelRef = useRef<ReturnType<ReturnType<typeof createClient>["channel"]> | null>(null);
   const refreshRef = useRef<() => Promise<void>>(async () => {});
 
@@ -136,32 +179,56 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
-  /** Đưa trình phát về đúng bài và đúng vị trí theo dữ liệu mới nhất từ server. */
+  /** Áp âm lượng / tắt tiếng hiện tại lên trình phát. */
+  const applyAudio = useCallback(() => {
+    const player = playerRef.current;
+    if (!player || !playerReadyRef.current) return;
+    try {
+      if (mutedRef.current || volumeRef.current === 0) {
+        player.mute();
+      } else {
+        player.unMute();
+        player.setVolume(volumeRef.current);
+      }
+    } catch {
+      /* bỏ qua */
+    }
+  }, []);
+
+  /** Đưa trình phát về đúng bài và đúng vị trí theo dữ liệu mới nhất từ server (chỉ khi thiết bị này đang nghe). */
   const syncPlayer = useCallback(() => {
     const player = playerRef.current;
     if (!player || !playerReadyRef.current) return;
     const current = tracksRef.current.find((t) => t.is_current) ?? null;
-    if (!current) {
-      if (loadedRef.current) player.stopVideo();
-      loadedRef.current = null;
+    if (!listeningRef.current || !current) {
+      if (loadedRef.current) {
+        try {
+          player.stopVideo();
+        } catch {
+          /* bỏ qua */
+        }
+        loadedRef.current = null;
+      }
+      setEngine("idle");
       return;
     }
     const seconds = positionMs() / 1000;
     if (loadedRef.current !== current.id) {
       loadedRef.current = current.id;
       metaSentRef.current = null;
+      setEngine("loading");
+      applyAudio();
       player.loadVideoById({ videoId: current.video_id, startSeconds: seconds });
-      if (mutedRef.current) player.mute();
-      else player.unMute();
+      applyAudio();
       return;
     }
     const state = player.getPlayerState();
     if (state === PLAYING) {
-      if (Math.abs(player.getCurrentTime() - seconds) > 4) player.seekTo(seconds, true);
-    } else if (state === PAUSED || state === -1 || state === 5) {
+      if (Math.abs(player.getCurrentTime() - seconds) > DRIFT_SECONDS) player.seekTo(seconds, true);
+    } else if (state === PAUSED || state === UNSTARTED || state === CUED) {
       player.playVideo();
     }
-  }, [positionMs]);
+  }, [positionMs, applyAudio]);
 
   const refresh = useCallback(async () => {
     try {
@@ -187,6 +254,59 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
     refreshRef.current = refresh;
   }, [refresh]);
 
+  /** Dừng nghe trên thiết bị này. persist=false khi bị tab khác giành quyền (không ghi "off" vì giá trị lưu dùng chung giữa các tab). */
+  const stopPlayback = useCallback((persist: boolean) => {
+    listeningRef.current = false;
+    setListening(false);
+    setEngine("idle");
+    if (persist) writeStore(SOUND_KEY, "off");
+    const player = playerRef.current;
+    if (player && playerReadyRef.current) {
+      try {
+        player.stopVideo();
+      } catch {
+        /* bỏ qua */
+      }
+    }
+    loadedRef.current = null;
+  }, []);
+
+  /** Bắt đầu nghe: vào lại đúng giây hiện tại của phòng, đồng thời báo các tab khác của trình duyệt này dừng. */
+  const startPlayback = useCallback(() => {
+    listeningRef.current = true;
+    setListening(true);
+    setElsewhere(false);
+    setEngine("loading");
+    writeStore(SOUND_KEY, "on");
+    try {
+      tabChannelRef.current?.postMessage({ type: "claim", id: tabIdRef.current });
+    } catch {
+      /* bỏ qua */
+    }
+    loadedRef.current = null;
+    syncPlayer();
+  }, [syncPlayer]);
+
+  // Mỗi trình duyệt chỉ một tab phát tiếng.
+  useEffect(() => {
+    if (!userId || typeof BroadcastChannel === "undefined") return;
+    const id = Math.random().toString(36).slice(2);
+    tabIdRef.current = id;
+    const channel = new BroadcastChannel(TAB_CHANNEL);
+    tabChannelRef.current = channel;
+    channel.onmessage = (event: MessageEvent) => {
+      const data = event.data as { type?: string; id?: string } | null;
+      if (data?.type === "claim" && data.id !== id && listeningRef.current) {
+        stopPlayback(false);
+        setElsewhere(true);
+      }
+    };
+    return () => {
+      channel.close();
+      tabChannelRef.current = null;
+    };
+  }, [userId, stopPlayback]);
+
   // Trình phát YouTube (ẩn, chỉ lấy tiếng).
   useEffect(() => {
     if (!userId) return;
@@ -209,37 +329,52 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
               const player = playerRef.current;
               if (!player) return;
               playerReadyRef.current = true;
-              player.mute();
-              let wantSound = false;
-              try {
-                wantSound = window.localStorage.getItem(SOUND_KEY) === "on";
-              } catch {
-                /* bỏ qua */
+
+              const storedVolume = readStore(VOLUME_KEY);
+              if (storedVolume !== null && storedVolume !== "" && Number.isFinite(Number(storedVolume))) {
+                const v = Math.max(0, Math.min(100, Math.round(Number(storedVolume))));
+                volumeRef.current = v;
+                setVolumeState(v);
               }
-              if (wantSound) {
-                // Lần trước đã bật tiếng: thử bật lại, trình duyệt từ chối thì giữ tắt tiếng để người dùng tự bấm.
-                mutedRef.current = false;
-                player.unMute();
+              applyAudio();
+
+              if (readStore(SOUND_KEY) === "on") {
+                // Lần trước đang nghe: thử nghe lại. Trình duyệt chặn tự phát có tiếng thì quay về trạng thái dừng để người dùng tự bấm Phát.
+                listeningRef.current = true;
+                setListening(true);
+                setEngine("loading");
+                try {
+                  tabChannelRef.current?.postMessage({ type: "claim", id: tabIdRef.current });
+                } catch {
+                  /* bỏ qua */
+                }
+                syncPlayer();
                 timer = setTimeout(() => {
-                  if (playerRef.current?.isMuted()) {
-                    mutedRef.current = true;
-                    setMuted(true);
-                  } else {
-                    setMuted(false);
-                  }
-                }, 800);
+                  if (!listeningRef.current) return;
+                  if (!tracksRef.current.some((t) => t.is_current)) return;
+                  const state = playerRef.current?.getPlayerState();
+                  if (state !== PLAYING && state !== BUFFERING) stopPlayback(false);
+                }, 3000);
               }
-              syncPlayer();
             },
             onStateChange: (event) => {
               const player = playerRef.current;
               if (!player) return;
-              if (event.data === ENDED) {
+              const state = event.data;
+              if (state === ENDED) {
+                if (!listeningRef.current) return;
                 const id = loadedRef.current;
                 if (id) nextMusic(id).catch(() => {}).finally(() => void refreshRef.current().then(broadcast));
                 return;
               }
-              if (event.data === PLAYING) {
+              if (!listeningRef.current) return;
+              if (state === PLAYING) {
+                setEngine("playing");
+                // Vừa tải xong thường đã trễ vài giây so với phòng: tua ngay cho khớp để các máy không vọng tiếng nhau.
+                if (tracksRef.current.some((t) => t.is_current)) {
+                  const target = positionMs() / 1000;
+                  if (Math.abs(player.getCurrentTime() - target) > DRIFT_SECONDS) player.seekTo(target, true);
+                }
                 const current = tracksRef.current.find((t) => t.is_current);
                 if (!current || current.id !== loadedRef.current || metaSentRef.current === current.id) return;
                 metaSentRef.current = current.id;
@@ -252,10 +387,13 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
                     .then(() => refreshRef.current())
                     .catch(() => {});
                 }
+              } else if (state === BUFFERING || state === UNSTARTED || state === CUED || state === PAUSED) {
+                setEngine("loading");
               }
             },
             onError: () => {
               // Video bị xóa / không cho nhúng: báo hết bài để cả phòng chuyển sang bài kế.
+              if (!listeningRef.current) return;
               const id = loadedRef.current;
               if (id) nextMusic(id).catch(() => {}).finally(() => void refreshRef.current().then(broadcast));
             },
@@ -277,7 +415,7 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
       loadedRef.current = null;
       clearHost(hostRef.current);
     };
-  }, [userId, syncPlayer, broadcast]);
+  }, [userId, syncPlayer, broadcast, applyAudio, positionMs, stopPlayback]);
 
   // Cập nhật định kỳ + khi quay lại tab + nhận tín hiệu tức thì từ máy khác.
   useEffect(() => {
@@ -302,25 +440,36 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
     };
   }, [userId, refresh]);
 
+  const togglePlay = useCallback(() => {
+    if (listeningRef.current) stopPlayback(true);
+    else startPlayback();
+  }, [startPlayback, stopPlayback]);
+
+  const setVolume = useCallback(
+    (value: number) => {
+      const next = Math.max(0, Math.min(100, Math.round(value)));
+      volumeRef.current = next;
+      setVolumeState(next);
+      if (next > 0 && mutedRef.current) {
+        mutedRef.current = false;
+        setMuted(false);
+      }
+      writeStore(VOLUME_KEY, String(next));
+      applyAudio();
+    },
+    [applyAudio],
+  );
+
   const toggleMute = useCallback(() => {
+    if (volumeRef.current === 0) {
+      setVolume(60);
+      return;
+    }
     const next = !mutedRef.current;
     mutedRef.current = next;
     setMuted(next);
-    try {
-      window.localStorage.setItem(SOUND_KEY, next ? "off" : "on");
-    } catch {
-      /* bỏ qua */
-    }
-    const player = playerRef.current;
-    if (!player || !playerReadyRef.current) return;
-    if (next) {
-      player.mute();
-    } else {
-      player.unMute();
-      player.setVolume(100);
-      if (player.getPlayerState() !== PLAYING) player.playVideo();
-    }
-  }, []);
+    applyAudio();
+  }, [applyAudio, setVolume]);
 
   const add = useCallback(
     async (link: string) => {
@@ -343,18 +492,33 @@ export function ForumMusicProvider({ children }: { children: ReactNode }) {
     [refresh, broadcast],
   );
 
+  const skip = useCallback(async () => {
+    const current = tracksRef.current.find((t) => t.is_current);
+    if (!current) return;
+    await skipMusic(current.id);
+    await refresh();
+    broadcast();
+  }, [refresh, broadcast]);
+
   const value = useMemo<MusicState>(
     () => ({
       ready,
       current: tracks.find((t) => t.is_current) ?? null,
       queue: tracks.filter((t) => !t.is_current),
+      listening,
+      engine,
+      elsewhere,
+      volume,
       muted,
+      togglePlay,
       toggleMute,
+      setVolume,
       positionMs,
       add,
       remove,
+      skip,
     }),
-    [ready, tracks, muted, toggleMute, positionMs, add, remove],
+    [ready, tracks, listening, engine, elsewhere, volume, muted, togglePlay, toggleMute, setVolume, positionMs, add, remove, skip],
   );
 
   return (
@@ -371,66 +535,106 @@ function clearHost(host: HTMLElement | null) {
 }
 
 // ---- Icon ----
-function Svg({ className = "h-5 w-5", children }: { className?: string; children: ReactNode }) {
-  return (
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.7} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
+function Svg({ className = "h-5 w-5", fill = false, children }: { className?: string; fill?: boolean; children: ReactNode }) {
+  return fill ? (
+    <svg viewBox="0 0 24 24" fill="currentColor" aria-hidden="true" className={className}>
+      {children}
+    </svg>
+  ) : (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" className={className}>
       {children}
     </svg>
   );
 }
-const MusicIcon = ({ className }: { className?: string }) => (
+type IconProps = { className?: string };
+const MusicIcon = ({ className }: IconProps) => (
   <Svg className={className}>
     <path d="M9 18V5l11-2v13" />
     <circle cx="6" cy="18" r="3" />
     <circle cx="17" cy="16" r="3" />
   </Svg>
 );
-const VolumeIcon = ({ className }: { className?: string }) => (
+const PlayGlyph = ({ className }: IconProps) => (
+  <Svg className={className} fill>
+    <path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11-6.86a1 1 0 0 0 0-1.7l-11-6.86A1 1 0 0 0 8 5.14z" />
+  </Svg>
+);
+const PauseGlyph = ({ className }: IconProps) => (
+  <Svg className={className} fill>
+    <rect x="6" y="4.5" width="4.2" height="15" rx="1.2" />
+    <rect x="13.8" y="4.5" width="4.2" height="15" rx="1.2" />
+  </Svg>
+);
+const NextGlyph = ({ className }: IconProps) => (
+  <Svg className={className} fill>
+    <path d="M6 5.2v13.6a.9.9 0 0 0 1.4.75l9.6-6.8a.9.9 0 0 0 0-1.5L7.4 4.45A.9.9 0 0 0 6 5.2z" />
+    <rect x="17.5" y="4.5" width="2.5" height="15" rx="1.1" />
+  </Svg>
+);
+const VolumeHighIcon = ({ className }: IconProps) => (
   <Svg className={className}>
     <path d="M11 5 6 9H3v6h3l5 4z" />
     <path d="M15.5 8.5a5 5 0 0 1 0 7M18.5 5.5a9 9 0 0 1 0 13" />
   </Svg>
 );
-const VolumeOffIcon = ({ className }: { className?: string }) => (
+const VolumeLowIcon = ({ className }: IconProps) => (
+  <Svg className={className}>
+    <path d="M11 5 6 9H3v6h3l5 4z" />
+    <path d="M15.5 8.5a5 5 0 0 1 0 7" />
+  </Svg>
+);
+const VolumeOffIcon = ({ className }: IconProps) => (
   <Svg className={className}>
     <path d="M11 5 6 9H3v6h3l5 4z" />
     <path d="m16 9 5 6M21 9l-5 6" />
   </Svg>
 );
-const SkipIcon = ({ className }: { className?: string }) => (
-  <Svg className={className}>
-    <path d="m5 5 9 7-9 7z" />
-    <path d="M19 5v14" />
-  </Svg>
-);
 
-/** Ảnh bìa bài hát dạng chiếc đĩa: xoay đều khi có bài đang phát, có lỗ tròn ở giữa. */
-function Disc({ videoId, size, spinning }: { videoId: string | null; size: number; spinning: boolean }) {
-  const [failed, setFailed] = useState(false);
-  const hole = Math.max(6, Math.round(size / 5));
+const MUSIC_CSS = `
+@keyframes fm-eq{0%,100%{transform:scaleY(.28)}50%{transform:scaleY(1)}}
+.fm-bar{height:100%;transform-origin:bottom;transform:scaleY(.28)}
+.fm-eq[data-active="1"] .fm-bar{animation:fm-eq .9s ease-in-out infinite}
+@keyframes fm-spin{to{transform:rotate(360deg)}}
+.fm-range{-webkit-appearance:none;appearance:none;height:4px;border-radius:9999px;cursor:pointer;outline:none;background:linear-gradient(to right,#fff var(--v,0%),rgba(255,255,255,.22) var(--v,0%))}
+.fm-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:9999px;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.55)}
+.fm-range::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:9999px;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.55)}
+.fm-range:focus-visible{outline:2px solid rgba(255,255,255,.7);outline-offset:5px}
+@media (prefers-reduced-motion:reduce){.fm-eq[data-active="1"] .fm-bar{animation:none}}
+`;
+
+/** Bốn thanh nhảy theo nhạc khi đang phát. */
+function Equalizer({ active, className = "h-3" }: { active: boolean; className?: string }) {
   return (
-    <span
-      aria-hidden="true"
-      style={{ width: size, height: size, animation: spinning ? "forum-disc 7s linear infinite" : undefined }}
-      className="relative block shrink-0 overflow-hidden rounded-full bg-slate-800 p-[2px] shadow-[0_0_0_1px_rgba(0,0,0,.08)]"
-    >
-      <style>{"@keyframes forum-disc{to{transform:rotate(360deg)}}@media (prefers-reduced-motion:reduce){[style*='forum-disc']{animation:none!important}}"}</style>
-      {videoId && !failed ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`} alt="" draggable={false} onError={() => setFailed(true)} className="h-full w-full rounded-full object-cover" />
-      ) : (
-        <span className="grid h-full w-full place-items-center rounded-full bg-slate-200 text-slate-500">
-          <MusicIcon className="h-[45%] w-[45%]" />
-        </span>
-      )}
-      <span style={{ width: hole, height: hole }} className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-slate-800 bg-slate-100" />
+    <span aria-hidden="true" data-active={active ? "1" : "0"} className={`fm-eq inline-flex items-end gap-[2px] ${className}`}>
+      {[0, 1, 2, 3].map((i) => (
+        <span key={i} className="fm-bar block w-[2px] rounded-full bg-current" style={{ animationDelay: `${i * 0.17}s` }} />
+      ))}
     </span>
   );
 }
 
-function Progress({ duration, positionMs }: { duration: number | null; positionMs: () => number }) {
+/** Ảnh bìa lấy từ YouTube; không có ảnh thì hiện biểu tượng nốt nhạc. */
+function Cover({ videoId, className = "" }: { videoId: string | null; className?: string }) {
+  const [failed, setFailed] = useState(false);
+  return (
+    <span aria-hidden="true" className={`relative block shrink-0 overflow-hidden bg-neutral-800 ${className}`}>
+      {videoId && !failed ? (
+        // eslint-disable-next-line @next/next/no-img-element
+        <img src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`} alt="" draggable={false} onError={() => setFailed(true)} className="h-full w-full object-cover" />
+      ) : (
+        <span className="grid h-full w-full place-items-center text-white/35">
+          <MusicIcon className="h-[45%] w-[45%]" />
+        </span>
+      )}
+    </span>
+  );
+}
+
+/** Vị trí hiện tại của bài trong phòng, cập nhật mỗi giây. */
+function useRoomPosition(positionMs: () => number, active: boolean) {
   const [pos, setPos] = useState(0);
   useEffect(() => {
+    if (!active) return;
     const read = () => setPos(positionMs());
     const first = setTimeout(read, 0);
     const timer = setInterval(read, 1000);
@@ -438,26 +642,37 @@ function Progress({ duration, positionMs }: { duration: number | null; positionM
       clearTimeout(first);
       clearInterval(timer);
     };
-  }, [positionMs]);
-  const pct = duration ? Math.min(100, (pos / (duration * 1000)) * 100) : 0;
-  return (
-    <div className="h-[3px] overflow-hidden rounded-full bg-slate-100" aria-hidden="true">
-      <div className="h-full rounded-full bg-black transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
-    </div>
-  );
+  }, [positionMs, active]);
+  return pos;
 }
 
-const iconButton =
-  "grid h-8 w-8 shrink-0 place-items-center rounded-full bg-slate-100 text-slate-600 transition hover:bg-slate-200 active:scale-90";
+function formatTime(ms: number) {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const m = Math.floor(total / 60);
+  const s = String(total % 60).padStart(2, "0");
+  if (m >= 60) return `${Math.floor(m / 60)}:${String(m % 60).padStart(2, "0")}:${s}`;
+  return `${m}:${s}`;
+}
 
-/** Ô nhạc vuông nhỏ đặt dưới khung nhân vật: bấm để mở bảng bài đang phát, ô dán link và danh sách chờ. */
+const noPosition = () => 0;
+const scrollbar = "[scrollbar-width:thin] [scrollbar-color:rgba(255,255,255,.25)_transparent]";
+
+/**
+ * Trình phát nhạc dưới khung nhân vật.
+ * - Thanh nhỏ: ảnh bìa, tên bài, nút Phát / Dừng. Bấm vào tên bài để mở bảng đầy đủ.
+ * - Bảng đầy đủ: ảnh bìa lớn, thanh tiến trình, Phát / Dừng, Bài tiếp theo (ai cũng bấm được), âm lượng, thêm bài và danh sách chờ.
+ */
 export function ForumMusicBar() {
   const music = useContext(MusicContext);
   const [open, setOpen] = useState(false);
   const [link, setLink] = useState("");
   const [busy, setBusy] = useState(false);
+  const [skipping, setSkipping] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const boxRef = useRef<HTMLDivElement>(null);
+
+  const current = music?.current ?? null;
+  const pos = useRoomPosition(music?.positionMs ?? noPosition, !!current);
 
   // Bấm ra ngoài hoặc nhấn Esc thì đóng bảng.
   useEffect(() => {
@@ -479,7 +694,24 @@ export function ForumMusicBar() {
   }, [open]);
 
   if (!music) return null;
-  const { current, queue, muted, ready } = music;
+  const { queue, ready, listening, engine, elsewhere, volume, muted } = music;
+
+  const playing = listening && engine === "playing";
+  const loading = listening && engine === "loading" && !!current;
+  const duration = current?.duration_seconds ?? null;
+  const shownPos = duration ? Math.min(pos, duration * 1000) : pos;
+  const pct = duration ? Math.min(100, (shownPos / (duration * 1000)) * 100) : 0;
+  const silent = muted || volume === 0;
+  const VolumeGlyph = silent ? VolumeOffIcon : volume < 50 ? VolumeLowIcon : VolumeHighIcon;
+  const statusText = !current
+    ? ready
+      ? "Chưa có bài nào"
+      : "Đang tải..."
+    : listening
+      ? loading
+        ? "Đang kết nối..."
+        : "Bạn đang nghe cùng mọi người"
+      : "Đã dừng trên máy này. Bấm ▶ để nghe tiếp";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -507,124 +739,249 @@ export function ForumMusicBar() {
     }
   }
 
-  return (
-    <div ref={boxRef} className="relative">
-      {/* Ô nhạc dưới khung nhân vật: đĩa xoay + tên bài + người mở. Chấm nhỏ ở đĩa là nút bật/tắt tiếng. */}
-      <button
-        type="button"
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        aria-label="Nhạc"
-        title={current ? current.title : "Nhạc"}
-        className="flex w-[11rem] max-w-full items-center gap-2 rounded-full bg-slate-100 py-1 pl-1 pr-3 text-left transition hover:bg-slate-200 active:scale-95"
-      >
-        <Disc key={current?.id ?? "none"} videoId={current?.video_id ?? null} size={36} spinning={!!current} />
-        <span className="min-w-0 flex-1">
-          <span className="block truncate text-[12px] font-medium leading-tight text-slate-900">{current ? current.title : ready ? "Chưa có bài nào" : "Đang tải..."}</span>
-          {current && <span className="mt-0.5 block truncate text-[11px] leading-tight text-slate-500">Mở bởi {current.display_name}</span>}
-        </span>
-      </button>
-      <button
-        type="button"
-        onClick={music.toggleMute}
-        aria-label={muted ? "Bật tiếng" : "Tắt tiếng"}
-        title={muted ? "Bật tiếng" : "Tắt tiếng"}
-        aria-pressed={!muted}
-        className={`absolute bottom-0 left-[27px] grid h-[18px] w-[18px] place-items-center rounded-full border transition active:scale-90 ${
-          muted ? "border-black bg-black text-white" : "border-slate-300 bg-white text-slate-700"
-        }`}
-      >
-        {muted ? <VolumeOffIcon className="h-2.5 w-2.5" /> : <VolumeIcon className="h-2.5 w-2.5" />}
-      </button>
+  async function skipCurrent() {
+    if (skipping) return;
+    setSkipping(true);
+    setError(null);
+    try {
+      await music!.skip();
+    } catch (err) {
+      console.error(err);
+      setError(musicErrorMessage(err));
+    } finally {
+      setSkipping(false);
+    }
+  }
 
+  const playLabel = listening ? "Dừng phát" : "Phát nhạc";
+
+  return (
+    <div ref={boxRef} className="relative w-[17.5rem] max-w-full">
+      <style>{MUSIC_CSS}</style>
+
+      {/* Thanh nhỏ */}
+      <div className="relative flex items-center gap-1 overflow-hidden rounded-2xl bg-neutral-950 p-1.5 text-white shadow-[0_10px_26px_-14px_rgba(0,0,0,.6)] ring-1 ring-black/5">
+        <button
+          type="button"
+          onClick={() => setOpen((v) => !v)}
+          aria-expanded={open}
+          aria-label="Mở trình phát nhạc"
+          title={current ? current.title : "Nhạc"}
+          className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl text-left transition active:scale-[.98]"
+        >
+          <Cover key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} className="h-11 w-11 rounded-xl" />
+          <span className="min-w-0 flex-1">
+            <span className="block truncate text-[13px] font-semibold leading-tight">{current ? current.title : ready ? "Chưa có bài nào" : "Đang tải..."}</span>
+            <span className="mt-1 flex items-center gap-1.5 text-[11px] leading-tight text-white/55">
+              {current ? (
+                <>
+                  <Equalizer active={playing} className="h-2.5 shrink-0 text-white/80" />
+                  <span className="truncate">Mở bởi {current.display_name}</span>
+                </>
+              ) : (
+                <span className="truncate">Bấm để thêm bài</span>
+              )}
+            </span>
+          </span>
+        </button>
+        <button
+          type="button"
+          onClick={music.togglePlay}
+          disabled={!current}
+          aria-label={playLabel}
+          title={playLabel}
+          aria-pressed={listening}
+          className="relative grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-black transition hover:scale-105 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+        >
+          {listening ? <PauseGlyph className="h-4 w-4" /> : <PlayGlyph className="ml-0.5 h-4 w-4" />}
+          {loading && <span aria-hidden="true" className="absolute inset-[3px] rounded-full border-2 border-transparent border-t-black/60" style={{ animation: "fm-spin .8s linear infinite" }} />}
+        </button>
+        {current && (
+          <span aria-hidden="true" className="absolute inset-x-0 bottom-0 h-[2px] bg-white/10">
+            <span className="block h-full bg-white/80 transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+          </span>
+        )}
+      </div>
+
+      {/* Bảng đầy đủ */}
       {open && (
         <section
-          aria-label="Nhạc"
-          className="post-in absolute left-0 top-full z-30 mt-2 w-[min(19rem,calc(100vw-2rem))] rounded-2xl border border-slate-200/80 bg-white p-2.5 shadow-[0_12px_32px_-12px_rgba(0,0,0,.25)]"
+          aria-label="Trình phát nhạc"
+          className="post-in absolute left-0 top-full z-30 mt-2 w-[min(21rem,calc(100vw-2rem))] overflow-hidden rounded-3xl bg-neutral-950 p-4 text-white shadow-[0_28px_70px_-18px_rgba(0,0,0,.6)] ring-1 ring-white/10"
         >
-          {current ? (
-            <div className="flex items-center gap-2">
-              <div className="min-w-0 flex-1">
-                <p className="truncate text-[13px] font-medium leading-tight text-slate-900" title={current.title}>
-                  {current.title}
-                </p>
-                <p className="mt-0.5 flex items-center gap-1.5 text-xs text-slate-500">
-                  <ForumAvatar avatar={current.avatar} size={14} />
-                  <span className="truncate">Mở bởi {current.display_name}</span>
-                </p>
-                <div className="mt-2">
-                  <Progress key={current.id} duration={current.duration_seconds} positionMs={music.positionMs} />
-                </div>
-              </div>
-              {current.can_remove && (
-                <button type="button" onClick={() => void drop(current)} aria-label="Bỏ qua bài này" title="Bỏ qua bài này" className={iconButton}>
-                  <SkipIcon className="h-4 w-4" />
-                </button>
+          {current && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img aria-hidden="true" alt="" src={`https://i.ytimg.com/vi/${current.video_id}/mqdefault.jpg`} className="pointer-events-none absolute inset-0 h-full w-full scale-150 object-cover opacity-25 blur-3xl" />
+          )}
+          <div className="relative">
+            <div className="flex items-center justify-between">
+              <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/60">
+                <Equalizer active={playing} className="h-3 text-white" />
+                Đang phát chung
+              </p>
+              <button
+                type="button"
+                onClick={() => setOpen(false)}
+                aria-label="Đóng"
+                title="Đóng"
+                className="grid h-7 w-7 place-items-center rounded-full text-white/60 transition hover:bg-white/10 hover:text-white active:scale-90"
+              >
+                <CloseIcon className="h-3.5 w-3.5" />
+              </button>
+            </div>
+
+            <Cover key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} className="mt-3 aspect-video w-full rounded-2xl shadow-[0_16px_36px_-10px_rgba(0,0,0,.75)]" />
+
+            <div className="mt-4 min-h-[3.25rem]">
+              {current ? (
+                <>
+                  <p className="line-clamp-2 text-[17px] font-semibold leading-snug tracking-tight" title={current.title}>
+                    {current.title}
+                  </p>
+                  <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-white/60">
+                    <ForumAvatar avatar={current.avatar} size={16} />
+                    <span className="truncate">Mở bởi {current.display_name}</span>
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="text-[17px] font-semibold tracking-tight">{ready ? "Chưa có bài nào" : "Đang tải..."}</p>
+                  {ready && <p className="mt-1.5 text-[13px] text-white/60">Dán link YouTube bên dưới để mở bài đầu tiên.</p>}
+                </>
               )}
             </div>
-          ) : (
-            <p className="text-[13px] text-slate-500">{ready ? "Chưa có bài nào" : "Đang tải..."}</p>
-          )}
 
-          <form onSubmit={submit} className="mt-2.5 flex items-center gap-2">
-            <input
-              value={link}
-              onChange={(e) => setLink(e.target.value)}
-              type="url"
-              inputMode="url"
-              placeholder="Link YouTube"
-              aria-label="Link YouTube"
-              maxLength={300}
-              className="h-9 min-w-0 flex-1 rounded-xl border border-slate-300 bg-white px-3 text-[13px] text-slate-900 outline-none transition placeholder:text-slate-400 focus:border-black focus:ring-4 focus:ring-black/10"
-            />
-            <button
-              type="submit"
-              disabled={busy || !link.trim()}
-              aria-label="Thêm bài"
-              title="Thêm bài"
-              className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-black text-white transition hover:bg-slate-800 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/40 border-t-white" /> : <PlusIcon className="h-4 w-4" />}
-            </button>
-          </form>
-          {error && (
-            <p role="alert" className="mt-1.5 text-xs text-red-600">
-              {error}
-            </p>
-          )}
-
-          {queue.length > 0 && (
-            <div className="mt-2 border-t border-slate-100 pt-2">
-              <p className="mb-1 text-xs font-medium text-slate-500">Danh sách chờ · {queue.length}</p>
-              <ul className="max-h-40 space-y-1 overflow-y-auto">
-                {queue.map((track, index) => (
-                  <li key={track.id} className="flex items-center gap-2 rounded-xl px-1 py-1 hover:bg-slate-50">
-                    <span className="w-4 shrink-0 text-center text-[11px] tabular-nums text-slate-400">{index + 1}</span>
-                    <div className="min-w-0 flex-1">
-                      <p className="truncate text-[13px] leading-tight text-slate-800" title={track.title}>
-                        {track.title}
-                      </p>
-                      <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-slate-500">
-                        <ForumAvatar avatar={track.avatar} size={12} />
-                        <span className="truncate">Mở bởi {track.display_name}</span>
-                      </p>
-                    </div>
-                    {track.can_remove && (
-                      <button
-                        type="button"
-                        onClick={() => void drop(track)}
-                        aria-label="Xóa khỏi danh sách"
-                        title="Xóa khỏi danh sách"
-                        className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 active:scale-90"
-                      >
-                        <CloseIcon className="h-3.5 w-3.5" />
-                      </button>
-                    )}
-                  </li>
-                ))}
-              </ul>
+            {/* Tiến trình của bài trong phòng */}
+            <div className="mt-3">
+              <div className="h-1 overflow-hidden rounded-full bg-white/15" aria-hidden="true">
+                <div className="h-full rounded-full bg-white transition-[width] duration-1000 ease-linear" style={{ width: `${pct}%` }} />
+              </div>
+              <div className="mt-1.5 flex justify-between text-[11px] tabular-nums text-white/50">
+                <span>{current ? formatTime(shownPos) : "0:00"}</span>
+                <span>{duration ? `-${formatTime(duration * 1000 - shownPos)}` : "--:--"}</span>
+              </div>
             </div>
-          )}
+
+            {/* Điều khiển */}
+            <div className="mt-2 flex items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={music.togglePlay}
+                disabled={!current}
+                aria-label={playLabel}
+                title={playLabel}
+                aria-pressed={listening}
+                className="relative grid h-14 w-14 place-items-center rounded-full bg-white text-black shadow-[0_10px_24px_-8px_rgba(255,255,255,.35)] transition hover:scale-105 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+              >
+                {listening ? <PauseGlyph className="h-6 w-6" /> : <PlayGlyph className="ml-1 h-6 w-6" />}
+                {loading && <span aria-hidden="true" className="absolute inset-[4px] rounded-full border-[3px] border-transparent border-t-black/55" style={{ animation: "fm-spin .8s linear infinite" }} />}
+              </button>
+              <button
+                type="button"
+                onClick={() => void skipCurrent()}
+                disabled={!current || skipping}
+                aria-label="Bài tiếp theo (chuyển bài cho cả phòng)"
+                title="Bài tiếp theo (chuyển bài cho cả phòng)"
+                className="grid h-11 w-11 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {skipping ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <NextGlyph className="h-[18px] w-[18px]" />}
+              </button>
+            </div>
+            <p className="mt-2.5 text-center text-xs text-white/50">{statusText}</p>
+            {elsewhere && !listening && <p className="mt-2 rounded-xl bg-white/10 px-3 py-2 text-center text-xs text-white/80">Nhạc đang phát ở tab khác của bạn. Bấm ▶ để chuyển sang tab này.</p>}
+
+            {/* Âm lượng: chỉ ảnh hưởng máy của bạn */}
+            <div className="mt-3 flex items-center gap-2.5">
+              <button
+                type="button"
+                onClick={music.toggleMute}
+                aria-label={silent ? "Bật tiếng" : "Tắt tiếng"}
+                title={silent ? "Bật tiếng" : "Tắt tiếng"}
+                aria-pressed={silent}
+                className="grid h-8 w-8 shrink-0 place-items-center rounded-full text-white/80 transition hover:bg-white/10 hover:text-white active:scale-90"
+              >
+                <VolumeGlyph className="h-[18px] w-[18px]" />
+              </button>
+              <input
+                type="range"
+                min={0}
+                max={100}
+                step={1}
+                value={silent ? 0 : volume}
+                onChange={(e) => music.setVolume(Number(e.target.value))}
+                aria-label="Âm lượng"
+                className="fm-range min-w-0 flex-1"
+                style={{ "--v": `${silent ? 0 : volume}%` } as CSSProperties}
+              />
+              <span className="w-8 shrink-0 text-right text-[11px] tabular-nums text-white/50">{silent ? 0 : volume}</span>
+            </div>
+
+            {/* Thêm bài */}
+            <form onSubmit={submit} noValidate className="mt-4 flex items-center gap-2">
+              <input
+                value={link}
+                onChange={(e) => setLink(e.target.value)}
+                type="text"
+                inputMode="url"
+                autoComplete="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                placeholder="Dán link YouTube để thêm bài"
+                aria-label="Link YouTube"
+                maxLength={300}
+                className="h-10 min-w-0 flex-1 rounded-full bg-white/10 px-4 text-[13px] text-white outline-none transition placeholder:text-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/30"
+              />
+              <button
+                type="submit"
+                disabled={busy || !link.trim()}
+                aria-label="Thêm bài"
+                title="Thêm bài"
+                className="grid h-10 w-10 shrink-0 place-items-center rounded-full bg-white text-black transition hover:scale-105 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:scale-100"
+              >
+                {busy ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-black/30 border-t-black" /> : <PlusIcon className="h-4 w-4" />}
+              </button>
+            </form>
+            {error && (
+              <p role="alert" className="mt-2 text-xs text-red-400">
+                {error}
+              </p>
+            )}
+
+            {/* Danh sách chờ */}
+            {queue.length > 0 && (
+              <div className="mt-4 border-t border-white/10 pt-3">
+                <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/50">Tiếp theo · {queue.length}</p>
+                <ul className={`max-h-48 space-y-0.5 overflow-y-auto ${scrollbar}`}>
+                  {queue.map((track, index) => (
+                    <li key={track.id} className="flex items-center gap-2.5 rounded-xl p-1.5 transition hover:bg-white/5">
+                      <span className="w-4 shrink-0 text-center text-[11px] tabular-nums text-white/40">{index + 1}</span>
+                      <Cover videoId={track.video_id} className="h-10 w-10 rounded-lg" />
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-medium leading-tight text-white" title={track.title}>
+                          {track.title}
+                        </p>
+                        <p className="mt-0.5 flex items-center gap-1.5 text-[11px] text-white/50">
+                          <ForumAvatar avatar={track.avatar} size={12} />
+                          <span className="truncate">Mở bởi {track.display_name}</span>
+                        </p>
+                      </div>
+                      {track.can_remove && (
+                        <button
+                          type="button"
+                          onClick={() => void drop(track)}
+                          aria-label="Xóa khỏi danh sách"
+                          title="Xóa khỏi danh sách"
+                          className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-white/40 transition hover:bg-white/10 hover:text-white active:scale-90"
+                        >
+                          <CloseIcon className="h-3.5 w-3.5" />
+                        </button>
+                      )}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+          </div>
         </section>
       )}
     </div>
