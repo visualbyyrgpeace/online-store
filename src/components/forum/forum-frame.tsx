@@ -5,6 +5,7 @@ import { Fragment, useState, type ReactNode } from "react";
 import { AuthGate } from "@/components/auth-gate";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
 import { ChatIcon } from "@/components/forum/forum-icons";
+import { ForumMusicBar } from "@/components/forum/forum-music";
 import { ProfilePicker } from "@/components/forum/profile-picker";
 import { FormMessage } from "@/components/ui/form";
 import { ErrorState } from "@/components/ui/states";
@@ -52,6 +53,7 @@ function ProfileGate({ children }: { children: (profile: ForumProfile) => ReactN
 
       {profile ? (
         <div className="space-y-3">
+          <ForumMusicBar />
           {profile.blocked && <FormMessage kind="error">Tài khoản của bạn đã bị chặn đăng bài và bình luận.</FormMessage>}
           {/* Đổi tên / avatar xong thì nội dung bên dưới tải lại để hiện đúng nhân vật mới. */}
           <Fragment key={`${profile.display_name}|${profile.avatar}`}>{children(profile)}</Fragment>

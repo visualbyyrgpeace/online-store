@@ -21,10 +21,11 @@ const supabaseOrigin = process.env.NEXT_PUBLIC_SUPABASE_URL;
 // Chỉ bật ở bản build thật; chế độ dev của Next cần 'unsafe-eval'.
 const csp = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline'", // Next xuất tĩnh cần script inline khởi động
+  "script-src 'self' 'unsafe-inline' https://www.youtube.com https://s.ytimg.com", // Next xuất tĩnh cần script inline khởi động; YouTube cho nhạc diễn đàn
   "style-src 'self' 'unsafe-inline'",
   "img-src 'self' data: blob: https:",
   "media-src 'self' data: blob: https:",
+  "frame-src https://www.youtube.com https://www.youtube-nocookie.com", // trình phát nhạc của Giangho Forum
   "font-src 'self' data:",
   "connect-src 'self' https: wss:",
   "worker-src 'self' blob:",
