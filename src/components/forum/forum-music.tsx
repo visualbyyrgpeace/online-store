@@ -2,7 +2,7 @@
 
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type ReactNode } from "react";
 import { ForumAvatar } from "@/components/forum/forum-avatar";
-import { CloseIcon, PlusIcon } from "@/components/utilities/tool-icons";
+import { ChevronDownIcon, CloseIcon, PlusIcon } from "@/components/utilities/tool-icons";
 import { useAuth } from "@/hooks/use-auth";
 import { createClient } from "@/lib/supabase/client";
 import {
@@ -547,13 +547,6 @@ function Svg({ className = "h-5 w-5", fill = false, children }: { className?: st
   );
 }
 type IconProps = { className?: string };
-const MusicIcon = ({ className }: IconProps) => (
-  <Svg className={className}>
-    <path d="M9 18V5l11-2v13" />
-    <circle cx="6" cy="18" r="3" />
-    <circle cx="17" cy="16" r="3" />
-  </Svg>
-);
 const PlayGlyph = ({ className }: IconProps) => (
   <Svg className={className} fill>
     <path d="M8 5.14v13.72a1 1 0 0 0 1.52.85l11-6.86a1 1 0 0 0 0-1.7l-11-6.86A1 1 0 0 0 8 5.14z" />
@@ -595,11 +588,12 @@ const MUSIC_CSS = `
 .fm-bar{height:100%;transform-origin:bottom;transform:scaleY(.28)}
 .fm-eq[data-active="1"] .fm-bar{animation:fm-eq .9s ease-in-out infinite}
 @keyframes fm-spin{to{transform:rotate(360deg)}}
+@keyframes fm-disc{to{transform:rotate(360deg)}}
 .fm-range{-webkit-appearance:none;appearance:none;height:4px;border-radius:9999px;cursor:pointer;outline:none;background:linear-gradient(to right,#fff var(--v,0%),rgba(255,255,255,.22) var(--v,0%))}
 .fm-range::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:9999px;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.55)}
 .fm-range::-moz-range-thumb{width:12px;height:12px;border:0;border-radius:9999px;background:#fff;box-shadow:0 1px 5px rgba(0,0,0,.55)}
 .fm-range:focus-visible{outline:2px solid rgba(255,255,255,.7);outline-offset:5px}
-@media (prefers-reduced-motion:reduce){.fm-eq[data-active="1"] .fm-bar{animation:none}}
+@media (prefers-reduced-motion:reduce){.fm-eq[data-active="1"] .fm-bar{animation:none}.fm-disc-spin{animation:none!important}}
 `;
 
 /** Bốn thanh nhảy theo nhạc khi đang phát. */
@@ -613,19 +607,26 @@ function Equalizer({ active, className = "h-3" }: { active: boolean; className?:
   );
 }
 
-/** Ảnh bìa lấy từ YouTube; không có ảnh thì hiện biểu tượng nốt nhạc. */
-function Cover({ videoId, className = "" }: { videoId: string | null; className?: string }) {
+/** Đĩa than: ảnh bài hát nằm giữa đĩa, quay đều khi đang nghe và đứng yên (giữ nguyên góc) khi dừng. */
+function Disc({ videoId, className = "", spinning = false }: { videoId: string | null; className?: string; spinning?: boolean }) {
   const [failed, setFailed] = useState(false);
   return (
-    <span aria-hidden="true" className={`relative block shrink-0 overflow-hidden bg-neutral-800 ${className}`}>
-      {videoId && !failed ? (
-        // eslint-disable-next-line @next/next/no-img-element
-        <img src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`} alt="" draggable={false} onError={() => setFailed(true)} className="h-full w-full object-cover" />
-      ) : (
-        <span className="grid h-full w-full place-items-center text-white/35">
-          <MusicIcon className="h-[45%] w-[45%]" />
-        </span>
-      )}
+    <span
+      aria-hidden="true"
+      className={`fm-disc-spin relative block shrink-0 rounded-full bg-neutral-900 p-[9%] shadow-[0_0_0_1px_rgba(255,255,255,.08)] ${className}`}
+      style={{ animation: "fm-disc 9s linear infinite", animationPlayState: spinning ? "running" : "paused" }}
+    >
+      {/* Rãnh đĩa */}
+      <span className="absolute inset-0 rounded-full" style={{ background: "repeating-radial-gradient(circle at center, rgba(255,255,255,.09) 0 1px, transparent 1px 3px)" }} />
+      {/* Nhãn đĩa */}
+      <span className="relative block h-full w-full overflow-hidden rounded-full bg-gradient-to-br from-neutral-600 to-neutral-800">
+        {videoId && !failed && (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img src={`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`} alt="" draggable={false} onError={() => setFailed(true)} className="h-full w-full object-cover" />
+        )}
+      </span>
+      {/* Lỗ giữa đĩa */}
+      <span className="absolute left-1/2 top-1/2 h-[15%] w-[15%] -translate-x-1/2 -translate-y-1/2 rounded-full bg-neutral-950 ring-[1.5px] ring-neutral-600" />
     </span>
   );
 }
@@ -695,7 +696,7 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
   }, [open, inline]);
 
   if (!music) return null;
-  const { queue, ready, listening, engine, elsewhere, volume, muted } = music;
+  const { queue, ready, listening, engine, volume, muted } = music;
 
   const playing = listening && engine === "playing";
   const loading = listening && engine === "loading" && !!current;
@@ -704,15 +705,6 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
   const pct = duration ? Math.min(100, (shownPos / (duration * 1000)) * 100) : 0;
   const silent = muted || volume === 0;
   const VolumeGlyph = silent ? VolumeOffIcon : volume < 50 ? VolumeLowIcon : VolumeHighIcon;
-  const statusText = !current
-    ? ready
-      ? "Chưa có bài nào"
-      : "Đang tải..."
-    : listening
-      ? loading
-        ? "Đang kết nối..."
-        : "Bạn đang nghe cùng mọi người"
-      : "Đã dừng trên máy này. Bấm ▶ để nghe tiếp";
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -770,20 +762,17 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
           title={current ? current.title : "Nhạc"}
           className="flex min-w-0 flex-1 items-center gap-2.5 rounded-xl text-left transition active:scale-[.98]"
         >
-          <Cover key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} className="h-11 w-11 rounded-xl" />
+          <Disc key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} spinning={playing} className="h-11 w-11" />
           <span className="min-w-0 flex-1">
             <span className="block truncate text-[13px] font-semibold leading-tight">{current ? current.title : ready ? "Chưa có bài nào" : "Đang tải..."}</span>
-            <span className="mt-1 flex items-center gap-1.5 text-[11px] leading-tight text-white/55">
-              {current ? (
-                <>
-                  <Equalizer active={playing} className="h-2.5 shrink-0 text-white/80" />
-                  <span className="truncate">Mở bởi {current.display_name}</span>
-                </>
-              ) : (
-                <span className="truncate">Bấm để thêm bài</span>
-              )}
-            </span>
+            {current && (
+              <span className="mt-1 flex items-center gap-1.5 text-[11px] leading-tight text-white/55">
+                <Equalizer active={playing} className="h-2.5 shrink-0 text-white/80" />
+                <span className="truncate">Mở bởi {current.display_name}</span>
+              </span>
+            )}
           </span>
+          <ChevronDownIcon className={`h-4 w-4 shrink-0 text-white/40 transition-transform duration-300 ${open ? "rotate-180" : ""}`} />
         </button>
         <button
           type="button"
@@ -819,40 +808,31 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
             <img aria-hidden="true" alt="" src={`https://i.ytimg.com/vi/${current.video_id}/mqdefault.jpg`} className="pointer-events-none absolute inset-0 h-full w-full scale-150 object-cover opacity-25 blur-3xl" />
           )}
           <div className="relative">
-            <div className="flex items-center justify-between">
-              <p className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.14em] text-white/60">
-                <Equalizer active={playing} className="h-3 text-white" />
-                Đang phát chung
-              </p>
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                aria-label="Đóng"
-                title="Đóng"
-                className="grid h-7 w-7 place-items-center rounded-full text-white/60 transition hover:bg-white/10 hover:text-white active:scale-90"
-              >
-                <CloseIcon className="h-3.5 w-3.5" />
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={() => setOpen(false)}
+              aria-label="Đóng"
+              title="Đóng"
+              className="absolute right-0 top-0 z-10 grid h-7 w-7 place-items-center rounded-full text-white/60 transition hover:bg-white/10 hover:text-white active:scale-90"
+            >
+              <CloseIcon className="h-3.5 w-3.5" />
+            </button>
 
-            <Cover key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} className="mt-3 aspect-video w-full rounded-2xl shadow-[0_16px_36px_-10px_rgba(0,0,0,.75)]" />
+            <Disc key={current?.video_id ?? "none"} videoId={current?.video_id ?? null} spinning={playing} className="mx-auto mt-1 h-44 w-44 shadow-[0_18px_40px_-12px_rgba(0,0,0,.8)]" />
 
-            <div className="mt-4 min-h-[3.25rem]">
+            <div className="mt-5 min-h-[3.25rem] text-center">
               {current ? (
                 <>
                   <p className="line-clamp-2 text-[17px] font-semibold leading-snug tracking-tight" title={current.title}>
                     {current.title}
                   </p>
-                  <p className="mt-1.5 flex items-center gap-1.5 text-[13px] text-white/60">
+                  <p className="mt-1.5 flex items-center justify-center gap-1.5 text-[13px] text-white/60">
                     <ForumAvatar avatar={current.avatar} size={16} />
                     <span className="truncate">Mở bởi {current.display_name}</span>
                   </p>
                 </>
               ) : (
-                <>
-                  <p className="text-[17px] font-semibold tracking-tight">{ready ? "Chưa có bài nào" : "Đang tải..."}</p>
-                  {ready && <p className="mt-1.5 text-[13px] text-white/60">Dán link YouTube bên dưới để mở bài đầu tiên.</p>}
-                </>
+                <p className="text-[17px] font-semibold tracking-tight">{ready ? "Chưa có bài nào" : "Đang tải..."}</p>
               )}
             </div>
 
@@ -885,15 +865,13 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
                 type="button"
                 onClick={() => void skipCurrent()}
                 disabled={!current || skipping}
-                aria-label="Bài tiếp theo (chuyển bài cho cả phòng)"
-                title="Bài tiếp theo (chuyển bài cho cả phòng)"
+                aria-label="Bài tiếp theo"
+                title="Bài tiếp theo"
                 className="grid h-11 w-11 place-items-center rounded-full bg-white/10 text-white transition hover:bg-white/20 active:scale-90 disabled:cursor-not-allowed disabled:opacity-40"
               >
                 {skipping ? <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" /> : <NextGlyph className="h-[18px] w-[18px]" />}
               </button>
             </div>
-            <p className="mt-2.5 text-center text-xs text-white/50">{statusText}</p>
-            {elsewhere && !listening && <p className="mt-2 rounded-xl bg-white/10 px-3 py-2 text-center text-xs text-white/80">Nhạc đang phát ở tab khác của bạn. Bấm ▶ để chuyển sang tab này.</p>}
 
             {/* Âm lượng: chỉ ảnh hưởng máy của bạn */}
             <div className="mt-3 flex items-center gap-2.5">
@@ -931,7 +909,7 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
                 autoComplete="off"
                 autoCapitalize="none"
                 spellCheck={false}
-                placeholder="Dán link YouTube để thêm bài"
+                placeholder="Link YouTube"
                 aria-label="Link YouTube"
                 maxLength={300}
                 className="h-10 min-w-0 flex-1 rounded-full bg-white/10 px-4 text-[13px] text-white outline-none transition placeholder:text-white/40 focus:bg-white/15 focus:ring-2 focus:ring-white/30"
@@ -960,7 +938,7 @@ export function ForumMusicBar({ layout = "popover" }: { layout?: "popover" | "in
                   {queue.map((track, index) => (
                     <li key={track.id} className="flex items-center gap-2.5 rounded-xl p-1.5 transition hover:bg-white/5">
                       <span className="w-4 shrink-0 text-center text-[11px] tabular-nums text-white/40">{index + 1}</span>
-                      <Cover videoId={track.video_id} className="h-10 w-10 rounded-lg" />
+                      <Disc videoId={track.video_id} className="h-10 w-10" />
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[13px] font-medium leading-tight text-white" title={track.title}>
                           {track.title}
