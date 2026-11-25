@@ -41,8 +41,18 @@ export function communityPromptImageUrl(path: string): string {
   return createClient().storage.from(IMAGE_BUCKET).getPublicUrl(path).data.publicUrl;
 }
 
+/** Đổi data URL thành Blob mà không dùng fetch(): CSP connect-src của trang không cho phép data:. */
+function dataUrlToBlob(dataUrl: string): Blob {
+  const [header, base64] = dataUrl.split(",", 2);
+  const mime = /^data:([^;]+)/.exec(header)?.[1] ?? "image/webp";
+  const binary = atob(base64 ?? "");
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
+  return new Blob([bytes], { type: mime });
+}
+
 async function uploadImage(ownerId: string, dataUrl: string): Promise<string> {
-  const blob = await fetch(dataUrl).then((response) => response.blob());
+  const blob = dataUrlToBlob(dataUrl);
   const path = `${ownerId}/${crypto.randomUUID()}.webp`;
   const { error } = await createClient()
     .storage.from(IMAGE_BUCKET)
