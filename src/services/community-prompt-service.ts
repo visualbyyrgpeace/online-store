@@ -43,9 +43,12 @@ export function communityPromptImageUrl(path: string): string {
 
 /** Đổi data URL thành Blob mà không dùng fetch(): CSP connect-src của trang không cho phép data:. */
 function dataUrlToBlob(dataUrl: string): Blob {
-  const [header, base64] = dataUrl.split(",", 2);
+  const comma = dataUrl.indexOf(",");
+  if (comma < 0) throw new Error("invalid_data_url");
+  const header = dataUrl.slice(0, comma);
+  const base64 = dataUrl.slice(comma + 1);
   const mime = /^data:([^;]+)/.exec(header)?.[1] ?? "image/webp";
-  const binary = atob(base64 ?? "");
+  const binary = atob(base64);
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   return new Blob([bytes], { type: mime });
