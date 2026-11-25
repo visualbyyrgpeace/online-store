@@ -179,23 +179,35 @@ function PromptImageHoverZoom({
   );
 }
 
+const MAX_IMAGE_SIDE = 2000; // đủ nét cho ảnh phác thảo, vẫn nén xuống dưới giới hạn bucket (512 KB)
+
 async function compressIllustration(file: File): Promise<string> {
   if (!file.type.startsWith("image/")) throw new Error("Chọn một tệp hình ảnh.");
   if (file.size > 15 * 1024 * 1024) throw new Error("Ảnh tối đa 15 MB.");
 
-  const bitmap = await createImageBitmap(file);
+  let bitmap: ImageBitmap;
   try {
+    bitmap = await createImageBitmap(file);
+  } catch {
+    throw new Error("Không đọc được ảnh này. Hãy thử ảnh JPG hoặc PNG khác.");
+  }
+  try {
+    const scale = Math.min(1, MAX_IMAGE_SIDE / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
-    canvas.width = bitmap.width;
-    canvas.height = bitmap.height;
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
     const context = canvas.getContext("2d");
     if (!context) throw new Error("Không xử lý được hình ảnh.");
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
     for (const quality of [0.86, 0.76, 0.66, 0.56, 0.46, 0.36, 0.26, 0.16, 0.1]) {
       const compressed = canvas.toDataURL("image/webp", quality);
+      // Safari không nén được WebP và trả về PNG.
+      if (!compressed.startsWith("data:image/webp")) {
+        throw new Error("Trình duyệt này không nén được ảnh WebP. Hãy dùng Chrome hoặc Edge.");
+      }
       if (compressed.length <= 480_000) return compressed;
     }
-    throw new Error("Ảnh vượt giới hạn dung lượng khi giữ nguyên kích thước.");
+    throw new Error("Ảnh quá phức tạp để nén. Hãy chọn ảnh nhỏ hơn hoặc ít chi tiết hơn.");
   } finally {
     bitmap.close();
   }
@@ -511,7 +523,8 @@ export function PromptUtility() {
       }
     } catch (err) {
       console.error(err);
-      setFormError(editing ? "Chưa lưu được thay đổi. Vui lòng thử lại." : "Chưa đăng được prompt. Vui lòng thử lại.");
+      const detail = err instanceof Error && err.message ? ` (${err.message})` : typeof err === "object" && err && "message" in err ? ` (${String((err as { message: unknown }).message)})` : "";
+      setFormError((editing ? "Chưa lưu được thay đổi. Vui lòng thử lại." : "Chưa đăng được prompt. Vui lòng thử lại.") + detail);
     } finally {
       setUploading(false);
     }
