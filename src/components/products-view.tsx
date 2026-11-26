@@ -3,21 +3,22 @@
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { useQuery } from "@/hooks/use-query";
-import { FREE_LABEL, PAID_LABEL } from "@/lib/site-config";
 import { listCategories, listProducts } from "@/services/product-service";
 import { ProductGrid } from "@/components/product-card";
 import { SearchBox } from "@/components/search-box";
 import { EmptyState, ErrorState, ProductGridSkeleton } from "@/components/ui/states";
 
-type Kind = "free" | "paid";
 const chip = "rounded-full border px-3.5 py-1.5 text-sm font-medium transition";
 const on = "border-black bg-black text-white";
 const off = "border-slate-200 bg-white text-slate-600 hover:border-slate-400 hover:text-black";
 
-function buildHref(base: string, opts: { category?: string; type?: Kind; q?: string; page?: number }) {
+// bỏ dấu + chữ thường để nhận ra danh mục "Mô hình 3D" dù tên hay slug viết thế nào
+const plain = (s: string) => s.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").toLowerCase();
+const is3d = (c: { name: string; slug: string }) => /(^|[^a-z0-9])3d([^a-z0-9]|$)/.test(plain(`${c.name} ${c.slug}`));
+
+function buildHref(base: string, opts: { category?: string; q?: string; page?: number }) {
   const q = new URLSearchParams();
   if (opts.q) q.set("q", opts.q);
-  if (opts.type) q.set("type", opts.type);
   if (opts.category) q.set("category", opts.category);
   if (opts.page && opts.page > 1) q.set("page", String(opts.page));
   const s = q.toString();
@@ -40,12 +41,19 @@ export function ProductsView({
   const page = Math.max(1, Number.parseInt(params?.get("page") ?? "1", 10) || 1);
   const category = params?.get("category") ?? undefined;
   const q = params?.get("q")?.slice(0, 100) || undefined;
-  const typeParam = params?.get("type");
-  const type: Kind | undefined = typeParam === "free" || typeParam === "paid" ? typeParam : undefined;
 
   const categories = useQuery("categories", listCategories);
-  const list = useQuery(`products:${page}:${category ?? ""}:${type ?? ""}:${q ?? ""}`, () =>
-    listProducts({ page, categorySlug: category, kind: type, q }),
+
+  // Danh mục 3D đứng đầu, các danh mục khác theo sau (giữ nguyên thứ tự cũ)
+  const ordered = categories.status === "success" ? [...categories.data.filter(is3d), ...categories.data.filter((c) => !is3d(c))] : [];
+  // Không có ?category= và không đang tìm kiếm => mặc định hiện danh mục đầu tiên (3D)
+  const needsDefault = !category && !q;
+  const waitingDefault = needsDefault && categories.status === "loading";
+  const activeCategory = category ?? (needsDefault ? ordered[0]?.slug : undefined);
+
+  const list = useQuery(`products:${page}:${waitingDefault ? "wait" : (activeCategory ?? "")}:${q ?? ""}`, () =>
+    // đang chờ danh sách danh mục thì chưa tải sản phẩm, tránh nháy hiện "tất cả" rồi mới nhảy sang 3D
+    waitingDefault ? new Promise<never>(() => {}) : listProducts({ page, categorySlug: activeCategory, q }),
   );
 
   return (
@@ -57,16 +65,10 @@ export function ProductsView({
         </div>
       )}
 
-      <div className="mb-3 flex flex-wrap gap-2">
-        <Link scroll={false} href={buildHref(base, { category, q })} className={`${chip} ${!type ? on : off}`}>Tất cả</Link>
-        <Link scroll={false} href={buildHref(base, { category, q, type: "free" })} className={`${chip} ${type === "free" ? on : off}`}>{FREE_LABEL}</Link>
-        <Link scroll={false} href={buildHref(base, { category, q, type: "paid" })} className={`${chip} ${type === "paid" ? on : off}`}>{PAID_LABEL}</Link>
-      </div>
-      {categories.status === "success" && categories.data.length > 0 && (
+      {ordered.length > 0 && (
         <div className="mb-6 flex flex-wrap gap-2">
-          <Link scroll={false} href={buildHref(base, { type, q })} className={`${chip} ${!category ? on : off}`}>Mọi danh mục</Link>
-          {categories.data.map((c) => (
-            <Link key={c.id} scroll={false} href={buildHref(base, { type, q, category: c.slug })} className={`${chip} ${category === c.slug ? on : off}`}>
+          {ordered.map((c) => (
+            <Link key={c.id} scroll={false} href={buildHref(base, { q, category: c.slug })} className={`${chip} ${activeCategory === c.slug ? on : off}`}>
               {c.name}
             </Link>
           ))}
@@ -81,12 +83,12 @@ export function ProductsView({
       {list.status === "loading" && <ProductGridSkeleton count={12} />}
       {list.status === "error" && <ErrorState />}
       {list.status === "success" && list.data.items.length === 0 && (
-        <EmptyState title="Không tìm thấy tài nguyên" description="Thử từ khóa hoặc bộ lọc khác." href={base} actionLabel="Xem tất cả" />
+        <EmptyState title="Không tìm thấy tài nguyên" description="Thử từ khóa hoặc bộ lọc khác." href={base} actionLabel="Xóa bộ lọc" />
       )}
       {list.status === "success" && list.data.items.length > 0 && (
         <>
           <ProductGrid products={list.data.items} />
-          <Pagination page={page} totalPages={Math.ceil(list.data.total / list.data.pageSize)} href={(p) => `${buildHref(base, { category, type, q, page: p })}${anchor ? `#${anchor}` : ""}`} />
+          <Pagination page={page} totalPages={Math.ceil(list.data.total / list.data.pageSize)} href={(p) => `${buildHref(base, { category, q, page: p })}${anchor ? `#${anchor}` : ""}`} />
         </>
       )}
     </div>

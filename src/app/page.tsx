@@ -47,7 +47,7 @@ export default function HomePage() {
             base="/"
             anchor="tai-nguyen"
             showSearch={false}
-            lead={<h2 className="text-xl font-semibold tracking-tight">Tất cả tài nguyên</h2>}
+            lead={<h2 className="text-xl font-semibold tracking-tight">Tài nguyên</h2>}
           />
         </Suspense>
       </section>
