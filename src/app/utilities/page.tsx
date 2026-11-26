@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRightIcon, ClipboardIcon, FilmIcon, FolderIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
+import { ArrowRightIcon, ClipboardIcon, FilmIcon, FolderIcon, FontIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
 
 export const metadata: Metadata = { title: "Tiện ích" };
 
@@ -46,6 +46,13 @@ const tools = [
     description: "Nối với Google Sheet để ghi công việc, xem ngay hôm nay cần làm gì và tick xong từng việc.",
     tags: ["Việc hôm nay", "Google Sheet", "Hai chiều"],
     Icon: ClipboardIcon,
+  },
+  {
+    href: "/utilities/viet-font/",
+    name: "Việt hóa font",
+    description: "Thêm đủ chữ tiếng Việt vào font OTF / TTF mà vẫn giữ nguyên glyph gốc, kerning và tính năng OpenType.",
+    tags: ["Glyph & dấu", "NFC · NFD", "TTF · OTF · WOFF"],
+    Icon: FontIcon,
   },
 ];
 
