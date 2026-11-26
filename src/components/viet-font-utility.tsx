@@ -7,6 +7,7 @@ import { openFont, type FontModel } from "@/lib/font-vi/font";
 import { pathBBox, pathToSvgD, transformPath, type Path } from "@/lib/font-vi/outline";
 import { createPlan, defaultParams, type CustomPaths, type Overrides, type Params, type Plan, type PlannedGlyph } from "@/lib/font-vi/plan";
 import { MARK_LABEL, VI_PRECOMPOSED, hex4, type MarkKind } from "@/lib/font-vi/vi";
+import { fitPath, parseSvgToPath, scaleAround } from "@/lib/font-vi/svg";
 import { toWoff } from "@/lib/font-vi/woff";
 
 const STEPS = ["Import", "Phân tích", "Glyph", "Unicode", "Kỹ thuật", "Kiểm tra", "Xuất font"];
@@ -154,6 +155,8 @@ export function VietFontUtility() {
   const [suffix, setSuffix] = useState("VN");
   const [cp, setCp] = useState<number | null>(null);
   const [editKey, setEditKey] = useState("");
+  const [svgMsg, setSvgMsg] = useState("");
+  const [hornAll, setHornAll] = useState(true);
   const [built, setBuilt] = useState<BuildResult | null>(null);
   const [busy, setBusy] = useState(false);
   const [sample, setSample] = useState(SAMPLE);
@@ -277,6 +280,49 @@ export function VietFontUtility() {
     const gid = plan.marks[kind]?.gid;
     return gid !== undefined ? model.path(gid) : null;
   }, [editKey, custom, plan, model]);
+
+  // hình hiện tại của một khóa dấu / râu (đã chỉnh hoặc mặc định)
+  const pathOfKey = (key: string): Path | null => {
+    if (!plan || !model) return null;
+    const c = custom[key];
+    if (c) return c;
+    const cp2 = plan.customPaths.get(key);
+    if (cp2) return cp2.path;
+    const gid = plan.marks[key.replace("mark.", "") as MarkKind]?.gid;
+    return gid !== undefined ? model.path(gid) : null;
+  };
+
+  // tải file SVG tự thiết kế để thay hình dấu / râu đang chọn
+  async function onSvgFile(e: ChangeEvent<HTMLInputElement>) {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file || !editKey) return;
+    setSvgMsg("");
+    if (file.size > 2_000_000) {
+      setSvgMsg("File quá lớn (tối đa 2 MB).");
+      return;
+    }
+    const res = parseSvgToPath(await file.text());
+    if (!res) {
+      setSvgMsg("Không đọc được file. Hãy xuất lại dưới dạng SVG.");
+      return;
+    }
+    if (!res.path.length) {
+      setSvgMsg(res.skippedStroke ? "File chỉ có nét viền (stroke). Hãy chuyển nét thành hình đặc (Outline Stroke / Object to Path) rồi xuất lại." : "File SVG không có hình vẽ nào để dùng.");
+      return;
+    }
+    const keys = hornAll && editKey.startsWith("horn.") ? editables.filter((x) => x.key.startsWith("horn.") && x.key !== "horn.comb").map((x) => x.key) : [editKey];
+    setCustom((c) => {
+      const next = { ...c };
+      for (const k of keys) {
+        const cur = pathOfKey(k);
+        const box = cur ? pathBBox(cur) : null;
+        next[k] = box ? fitPath(res.path, box) : res.path;
+      }
+      return next;
+    });
+    setSvgMsg(res.skippedStroke ? "Đã áp dụng. Một số hình chỉ có nét viền nên bị bỏ qua." : "Đã áp dụng hình từ file SVG.");
+  }
 
   const maxStep = model ? 6 : 0;
 
@@ -492,7 +538,10 @@ export function VietFontUtility() {
             </div>
             <div className={card}>
               <h3 className="font-semibold text-slate-900">Hình dấu / râu</h3>
-              <select value={editKey} onChange={(e) => setEditKey(e.target.value)} className="mt-3 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm">
+              <select value={editKey} onChange={(e) => {
+                  setEditKey(e.target.value);
+                  setSvgMsg("");
+                }} className="mt-3 h-10 w-full rounded-xl border border-slate-200 px-3 text-sm">
                 <option value="">Chọn hình cần chỉnh…</option>
                 {editables.map((e) => (
                   <option key={e.key} value={e.key}>
@@ -500,9 +549,33 @@ export function VietFontUtility() {
                   </option>
                 ))}
               </select>
+              <div className="mt-3 space-y-2">
+                <label className={`${btn} w-full cursor-pointer ${editKey ? "" : "pointer-events-none opacity-50"}`}>
+                  <UploadIcon className="h-4 w-4" /> Tải file SVG làm hình này
+                  <input type="file" accept=".svg,image/svg+xml" className="hidden" disabled={!editKey} onChange={onSvgFile} />
+                </label>
+                {editKey.startsWith("horn.") && editKey !== "horn.comb" && (
+                  <label className="flex items-center gap-2 text-xs text-slate-600">
+                    <input type="checkbox" checked={hornAll} onChange={(e) => setHornAll(e.target.checked)} className="accent-black" />
+                    Dùng cho cả các râu khác (ơ, Ơ, ư, Ư)
+                  </label>
+                )}
+                <p className="text-xs leading-relaxed text-slate-500">
+                  {editKey ? "Vẽ bằng Illustrator, Figma, Inkscape… rồi xuất SVG (nét viền phải đổi thành hình đặc). Hình tự co vừa khung hiện tại, sau đó vẫn kéo điểm hoặc bấm nút to/nhỏ để chỉnh tiếp." : "Chọn hình cần chỉnh ở trên, rồi tải file SVG của bạn lên."}
+                </p>
+                {svgMsg && <p className="text-xs font-medium text-slate-700">{svgMsg}</p>}
+              </div>
               {editKey && editPath && (
                 <div className="mt-3 space-y-2">
                   <PathEditor path={editPath} onChange={(p) => setCustom((c) => ({ ...c, [editKey]: p }))} />
+                  <div className="flex gap-2">
+                    <button type="button" className={`${btn} flex-1`} onClick={() => setCustom((c) => ({ ...c, [editKey]: scaleAround(editPath, 0.9) }))}>
+                      Nhỏ lại 10%
+                    </button>
+                    <button type="button" className={`${btn} flex-1`} onClick={() => setCustom((c) => ({ ...c, [editKey]: scaleAround(editPath, 1.1) }))}>
+                      To ra 10%
+                    </button>
+                  </div>
                   <button
                     type="button"
                     className={btn}
