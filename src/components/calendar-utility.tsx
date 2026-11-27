@@ -8,6 +8,7 @@ import { ChevronLeftIcon, ChevronRightIcon, EditIcon, PlusIcon, TrashIcon } from
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@/hooks/use-query";
 import { dayKey, dayKeyOf, MONTH_NAMES, parseDayKey } from "@/lib/forum-days";
+import { holidaysForYear, type FixedHoliday } from "@/lib/fixed-holidays";
 import { dayCanChi, lunarLabel, lunarToSolar, solarToLunar, yearName } from "@/lib/lunar";
 import { createNote, deleteNote, isCalendarAdmin, listNotesForYear, updateNote, type CalendarNote, type CalendarType } from "@/services/calendar-service";
 
@@ -69,6 +70,8 @@ export function CalendarUtility() {
   });
 
   const notesByDay = useMemo(() => groupByDay(yearNotes.status === "success" ? yearNotes.data : []), [yearNotes]);
+  // Ngày lễ cố định: tính trực tiếp, ai cũng thấy (không cần đăng nhập).
+  const holidaysByDay = useMemo(() => (viewYear ? holidaysForYear(viewYear) : new Map<string, FixedHoliday[]>()), [viewYear]);
 
   const next = useMemo(() => {
     if (!today || upcomingPool.status !== "success") return null;
@@ -191,18 +194,23 @@ export function CalendarUtility() {
             const edge = `${i % 7 !== 0 ? "border-l" : ""} ${i >= 7 ? "border-t" : ""} border-slate-200`;
             if (!cell) return <span key={`b${i}`} aria-hidden="true" className={`min-h-[64px] bg-slate-50/50 sm:min-h-[100px] ${edge}`} />;
             const notes = notesByDay.get(cell.key) ?? [];
+            const holidays = holidaysByDay.get(cell.key) ?? [];
             const isToday = cell.key === today;
             return (
               <button
                 key={cell.key}
                 type="button"
                 onClick={() => setSelected(cell.key)}
-                aria-label={`${viDate(cell.key)}, âm lịch ${cell.lunar.day}/${cell.lunar.month}${notes.length ? `, ${notes.length} ghi chú` : ""}`}
+                aria-label={`${viDate(cell.key)}, âm lịch ${cell.lunar.day}/${cell.lunar.month}${notes.length ? `, ${notes.length} ghi chú` : ""}${holidays.length ? `, ${holidays.map((h) => h.name).join(", ")}` : ""}`}
+                title={holidays.length ? holidays.map((h) => h.name).join(" · ") : undefined}
                 className={`flex min-h-[64px] flex-col items-stretch gap-1 p-1.5 text-left outline-none transition hover:bg-slate-100 focus-visible:bg-slate-100 sm:min-h-[100px] sm:p-2 ${edge}`}
               >
                 <span className="flex items-start justify-between gap-1">
-                  <span className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-xs font-semibold sm:text-sm ${isToday ? "bg-black text-white" : "text-slate-900"}`}>
-                    {cell.day}
+                  <span className="flex items-start gap-0.5">
+                    <span className={`grid h-6 min-w-6 place-items-center rounded-full px-1 text-xs font-semibold sm:text-sm ${isToday ? "bg-black text-white" : "text-slate-900"}`}>
+                      {cell.day}
+                    </span>
+                    {holidays.length > 0 && <span aria-hidden="true" className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-500" />}
                   </span>
                   <span className={`pt-1 text-[10px] leading-none sm:text-[11px] ${cell.lunar.day === 1 ? "font-semibold text-slate-900" : "text-slate-400"}`}>
                     {lunarLabel(cell.lunar)}
@@ -238,6 +246,7 @@ export function CalendarUtility() {
             year={view.y}
             today={today}
             notesByDay={notesByDay}
+            holidaysByDay={holidaysByDay}
             onMonth={(m) => {
               setView({ y: view.y, m });
               setMode("month");
@@ -273,6 +282,7 @@ export function CalendarUtility() {
           dayKeyValue={selected}
           isAdmin={isAdmin}
           notes={notesByDay.get(selected) ?? []}
+          holidays={holidaysByDay.get(selected) ?? []}
           loadingNotes={isAdmin && yearNotes.status === "loading"}
           onClose={() => setSelected(null)}
           onChanged={() => setVersion((v) => v + 1)}
@@ -286,12 +296,14 @@ function YearView({
   year,
   today,
   notesByDay,
+  holidaysByDay,
   onMonth,
   onPick,
 }: {
   year: number;
   today: string;
   notesByDay: Map<string, CalendarNote[]>;
+  holidaysByDay: Map<string, FixedHoliday[]>;
   onMonth: (m: number) => void;
   onPick: (key: string) => void;
 }) {
@@ -325,6 +337,7 @@ function YearView({
               const d = i + 1;
               const key = dayKey(year, m, d);
               const notes = notesByDay.get(key);
+              const holidays = holidaysByDay.get(key);
               const isToday = key === today;
               // Ô cố định dạng vuông (aspect-square) + rounded-full => luôn là hình tròn tuyệt đối.
               const tone = notes
@@ -337,12 +350,13 @@ function YearView({
                   key={key}
                   type="button"
                   onClick={() => onPick(key)}
-                  title={notes ? notes.map((n) => n.title).join(" · ") : undefined}
-                  aria-label={`${viDate(key)}${notes ? `, ${notes.length} ghi chú` : ""}`}
+                  title={[...(holidays ?? []).map((h) => h.name), ...(notes ?? []).map((n) => n.title)].join(" · ") || undefined}
+                  aria-label={`${viDate(key)}${notes ? `, ${notes.length} ghi chú` : ""}${holidays ? `, ${holidays.map((h) => h.name).join(", ")}` : ""}`}
                   className="group block w-full rounded-full outline-none"
                 >
-                  <span className={`mx-auto grid aspect-square w-full max-w-7 place-items-center rounded-full text-[11px] font-medium transition group-focus-visible:ring-2 group-focus-visible:ring-slate-500 ${tone}`}>
+                  <span className={`relative mx-auto grid aspect-square w-full max-w-7 place-items-center rounded-full text-[11px] font-medium transition group-focus-visible:ring-2 group-focus-visible:ring-slate-500 ${tone}`}>
                     {d}
+                    {holidays && <span aria-hidden="true" className="absolute bottom-[3px] left-1/2 h-1 w-1 -translate-x-1/2 rounded-full bg-blue-500 ring-1 ring-white" />}
                   </span>
                 </button>
               );
@@ -431,6 +445,7 @@ function DayModal({
   dayKeyValue,
   isAdmin,
   notes,
+  holidays,
   loadingNotes,
   onClose,
   onChanged,
@@ -438,6 +453,7 @@ function DayModal({
   dayKeyValue: string;
   isAdmin: boolean;
   notes: CalendarNote[];
+  holidays: FixedHoliday[];
   loadingNotes: boolean;
   onClose: () => void;
   onChanged: () => void;
@@ -599,6 +615,23 @@ function DayModal({
           <dd className="mt-0.5 font-semibold text-slate-950">Ngày {dayCanChi(date.getDate(), date.getMonth() + 1, date.getFullYear())}</dd>
         </div>
       </dl>
+
+      {holidays.length > 0 && (
+        <div className="mt-4">
+          <h3 className="text-sm font-semibold text-slate-950">Ngày lễ</h3>
+          <ul className="mt-2 space-y-1.5">
+            {holidays.map((h) => (
+              <li key={h.name} className="flex items-start gap-2 text-sm text-slate-800">
+                <span aria-hidden="true" className="mt-1.5 h-2 w-2 shrink-0 rounded-full bg-blue-500" />
+                <span>
+                  {h.name}
+                  <span className="text-slate-400"> · {h.lunar ? `theo âm lịch ${h.day}/${h.month}` : "theo dương lịch"}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
 
       {isAdmin && (
         <div className="mt-6">
