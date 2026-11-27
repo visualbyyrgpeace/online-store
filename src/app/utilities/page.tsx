@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRightIcon, ClipboardIcon, FilmIcon, FolderIcon, FontIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
+import { ArrowRightIcon, CalendarDaysIcon, ClipboardIcon, FilmIcon, FolderIcon, FontIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
 
 export const metadata: Metadata = { title: "Tiện ích" };
 
@@ -53,6 +53,13 @@ const tools = [
     description: "Thêm đủ chữ tiếng Việt vào font OTF / TTF mà vẫn giữ nguyên glyph gốc, kerning và tính năng OpenType.",
     tags: ["Glyph & dấu", "NFC · NFD", "TTF · OTF · WOFF"],
     Icon: FontIcon,
+  },
+  {
+    href: "/utilities/calendar/",
+    name: "Lịch",
+    description: "Xem ngày dương và âm lịch, bấm vào ngày để biết can chi; admin có thể ghi chú ngày đặc biệt.",
+    tags: ["Dương · Âm lịch", "Can chi", "Ghi chú (admin)"],
+    Icon: CalendarDaysIcon,
   },
 ];
 

@@ -5,7 +5,7 @@ import Link from "next/link";
 import { useAuth } from "@/hooks/use-auth";
 import { Byline } from "@/components/byline";
 import { ChatIcon } from "@/components/forum/forum-icons";
-import { ClipboardIcon, FilmIcon, FolderIcon, FontIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
+import { CalendarDaysIcon, ClipboardIcon, FilmIcon, FolderIcon, FontIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
 import { SITE_NAME } from "@/lib/site-config";
 
 const UTILITY_LINKS = [
@@ -16,6 +16,7 @@ const UTILITY_LINKS = [
   { href: "/utilities/folders/", label: "Quản lý thư mục", Icon: FolderIcon },
   { href: "/utilities/jobs/", label: "Quản lý Job", Icon: ClipboardIcon },
   { href: "/utilities/viet-font/", label: "Việt hóa font", Icon: FontIcon },
+  { href: "/utilities/calendar/", label: "Lịch", Icon: CalendarDaysIcon },
 ];
 
 export function LogoMark() {

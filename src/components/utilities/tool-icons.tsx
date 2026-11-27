@@ -242,3 +242,10 @@ export const FontIcon = (p: IconProps) => (
     <path d="M17 11h4M19 11v9" />
   </Svg>
 );
+
+export const CalendarDaysIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5" width="17" height="15" rx="3" />
+    <path d="M3.5 10h17M8 3v4M16 3v4M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01" />
+  </Svg>
+);
