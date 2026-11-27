@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { FormMessage, inputClass, primaryButton, secondaryButton } from "@/components/ui/form";
 import { Modal } from "@/components/utilities/modal";
+import { guessNoteIcon, NOTE_ICONS, NoteIcon, noteIconLabel } from "@/components/utilities/note-icons";
 import { ChevronLeftIcon, ChevronRightIcon, EditIcon, PlusIcon, TrashIcon } from "@/components/utilities/tool-icons";
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@/hooks/use-query";
@@ -169,7 +170,8 @@ export function CalendarUtility() {
         >
           <p className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Ngày quan trọng tiếp theo</p>
           <p className="mt-1 text-2xl font-semibold text-slate-950">{next.days === 0 ? "Hôm nay" : `Còn ${next.days} ngày`}</p>
-          <p className="mt-1 text-sm text-slate-700">
+          <p className="mt-1 flex items-center gap-1.5 text-sm text-slate-700">
+            <NoteIcon id={next.note.icon} className="h-4 w-4 shrink-0 text-slate-950" />
             {next.note.title} <span className="text-slate-400">· {viDate(next.note.note_date)}</span>
           </p>
         </button>
@@ -209,15 +211,16 @@ export function CalendarUtility() {
                   <>
                     <span className="hidden flex-col gap-0.5 sm:flex">
                       {notes.slice(0, 2).map((n) => (
-                        <span key={n.id} className="truncate rounded border-l-2 border-black bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-800">
-                          {n.title}
+                        <span key={n.id} className="flex items-center gap-1 rounded bg-slate-100 px-1.5 py-0.5 text-[11px] font-medium text-slate-800">
+                          <NoteIcon id={n.icon} className="h-3 w-3 shrink-0" />
+                          <span className="truncate">{n.title}</span>
                         </span>
                       ))}
                       {notes.length > 2 && <span className="px-1 text-[10px] text-slate-400">+{notes.length - 2} nữa</span>}
                     </span>
                     <span className="flex gap-0.5 sm:hidden" aria-hidden="true">
                       {notes.slice(0, 3).map((n) => (
-                        <span key={n.id} className="h-1.5 w-1.5 rounded-full bg-black" />
+                        <NoteIcon key={n.id} id={n.icon} className="h-3 w-3" />
                       ))}
                     </span>
                   </>
@@ -314,7 +317,10 @@ function YearModal({
                         <span className="-mt-2 text-[9px] leading-none text-white/70">{WEEK_HEAD[d.getDay()]}</span>
                       </span>
                       <span className="min-w-0 flex-1">
-                        <span className="block truncate text-sm font-semibold text-slate-950">{note.title}</span>
+                        <span className="flex items-center gap-1.5 text-sm font-semibold text-slate-950">
+                          <NoteIcon id={note.icon} className="h-3.5 w-3.5 shrink-0" />
+                          <span className="truncate">{note.title}</span>
+                        </span>
                         <span className="block text-xs text-slate-500">
                           {pad(d.getDate())}/{pad(d.getMonth() + 1)} · Âm lịch {lunar.day}/{lunar.month}
                           {note.repeat_yearly ? " · Hằng năm" : ""}
@@ -353,6 +359,8 @@ function DayModal({
   const [detail, setDetail] = useState("");
   const [noteDate, setNoteDate] = useState(dayKeyValue);
   const [repeat, setRepeat] = useState(false);
+  const [icon, setIcon] = useState<string | null>(null);
+  const [iconTouched, setIconTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -362,6 +370,8 @@ function DayModal({
     setDetail("");
     setNoteDate(dayKeyValue);
     setRepeat(false);
+    setIcon(null);
+    setIconTouched(false);
   }
 
   function startEdit(note: CalendarNote) {
@@ -370,6 +380,8 @@ function DayModal({
     setDetail(note.detail);
     setNoteDate(note.note_date);
     setRepeat(note.repeat_yearly);
+    setIcon(note.icon);
+    setIconTouched(true);
     setError(null);
   }
 
@@ -387,7 +399,7 @@ function DayModal({
     setBusy(true);
     setError(null);
     try {
-      const input = { noteDate, title: cleanTitle, detail: detail.trim(), repeatYearly: repeat };
+      const input = { noteDate, title: cleanTitle, detail: detail.trim(), repeatYearly: repeat, icon };
       if (editing) await updateNote(editing.id, input);
       else await createNote(input);
       reset();
@@ -440,6 +452,9 @@ function DayModal({
           <ul className="mt-2 space-y-2">
             {notes.map((note) => (
               <li key={note.id} className="flex items-start gap-3 rounded-xl border border-slate-200 p-3">
+                <span className="grid h-9 w-9 shrink-0 place-items-center rounded-lg bg-black text-white">
+                  <NoteIcon id={note.icon} className="h-[18px] w-[18px]" />
+                </span>
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-sm font-semibold text-slate-950">{note.title}</p>
                   {note.detail && <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-slate-600">{note.detail}</p>}
@@ -461,7 +476,43 @@ function DayModal({
               <label htmlFor="cal-title" className="mb-1.5 block text-sm font-medium text-slate-700">
                 Hôm nay là ngày gì?
               </label>
-              <input id="cal-title" value={title} onChange={(e) => setTitle(e.target.value)} maxLength={120} placeholder="Ví dụ: Sinh nhật bố, Ngày giỗ, Hạn nộp…" className={inputClass} />
+              <input
+                id="cal-title"
+                value={title}
+                onChange={(e) => {
+                  setTitle(e.target.value);
+                  if (!iconTouched) setIcon(guessNoteIcon(e.target.value));
+                }} maxLength={120} placeholder="Ví dụ: Sinh nhật bố, Ngày giỗ, Hạn nộp…"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <p className="mb-1.5 text-sm font-medium text-slate-700">
+                Biểu tượng{icon ? <span className="font-normal text-slate-500"> · {noteIconLabel(icon)}</span> : null}
+              </p>
+              <div role="group" aria-label="Chọn biểu tượng" className="grid grid-cols-6 gap-1.5">
+                {NOTE_ICONS.map(({ id, label, Icon }) => {
+                  const on = icon === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      title={label}
+                      aria-label={label}
+                      aria-pressed={on}
+                      onClick={() => {
+                        setIconTouched(true);
+                        setIcon(on ? null : id);
+                      }}
+                      className={`grid h-10 place-items-center rounded-lg border transition active:scale-90 ${
+                        on ? "border-black bg-black text-white" : "border-slate-200 bg-white text-slate-600 hover:border-slate-900 hover:text-slate-900"
+                      }`}
+                    >
+                      <Icon className="h-5 w-5" />
+                    </button>
+                  );
+                })}
+              </div>
             </div>
             <div>
               <label htmlFor="cal-detail" className="mb-1.5 block text-sm font-medium text-slate-700">
