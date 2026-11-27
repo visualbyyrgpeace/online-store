@@ -8,8 +8,8 @@ import { ChevronLeftIcon, ChevronRightIcon, EditIcon, PlusIcon, TrashIcon } from
 import { useAuth } from "@/hooks/use-auth";
 import { useQuery } from "@/hooks/use-query";
 import { dayKey, dayKeyOf, MONTH_NAMES, parseDayKey } from "@/lib/forum-days";
-import { dayCanChi, lunarLabel, solarToLunar, yearName } from "@/lib/lunar";
-import { createNote, deleteNote, isCalendarAdmin, listNotesForYear, updateNote, type CalendarNote } from "@/services/calendar-service";
+import { dayCanChi, lunarLabel, lunarToSolar, solarToLunar, yearName } from "@/lib/lunar";
+import { createNote, deleteNote, isCalendarAdmin, listNotesForYear, updateNote, type CalendarNote, type CalendarType } from "@/services/calendar-service";
 
 const WEEK_HEAD = ["CN", "T2", "T3", "T4", "T5", "T6", "T7"];
 const WEEKDAY_FULL = ["Chủ nhật", "Thứ hai", "Thứ ba", "Thứ tư", "Thứ năm", "Thứ sáu", "Thứ bảy"];
@@ -398,7 +398,7 @@ function YearNotes({
                 const lunar = solarToLunar(d.getDate(), d.getMonth() + 1, d.getFullYear());
                 const past = note.note_date < today;
                 return (
-                  <li key={note.id}>
+                  <li key={`${note.id}-${note.note_date}`}>
                     <button type="button" onClick={() => onPick(note.note_date)} className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-slate-50 ${past ? "opacity-50" : ""}`}>
                       <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-black text-white">
                         <span className="text-base font-semibold leading-none">{d.getDate()}</span>
@@ -411,6 +411,7 @@ function YearNotes({
                         </span>
                         <span className="block text-xs text-slate-500">
                           {pad(d.getDate())}/{pad(d.getMonth() + 1)} · Âm lịch {lunar.day}/{lunar.month}
+                          {note.calendar_type === "lunar" ? " · Theo âm lịch" : ""}
                           {note.repeat_yearly ? " · Hằng năm" : ""}
                         </span>
                       </span>
@@ -441,12 +442,18 @@ function DayModal({
   onClose: () => void;
   onChanged: () => void;
 }) {
-  const date = parseDayKey(dayKeyValue);
+  const date = useMemo(() => parseDayKey(dayKeyValue), [dayKeyValue]);
   const [editing, setEditing] = useState<CalendarNote | null>(null);
   const [title, setTitle] = useState("");
   const [detail, setDetail] = useState("");
   const [noteDate, setNoteDate] = useState(dayKeyValue);
   const [repeat, setRepeat] = useState(false);
+  const initialLunar = useMemo(() => solarToLunar(date.getDate(), date.getMonth() + 1, date.getFullYear()), [date]);
+  const [calType, setCalType] = useState<CalendarType>("solar");
+  const [lunarDay, setLunarDay] = useState(initialLunar.day);
+  const [lunarMonth, setLunarMonth] = useState(initialLunar.month);
+  const [lunarYear, setLunarYear] = useState(initialLunar.year);
+  const [lunarLeap, setLunarLeap] = useState(initialLunar.leap);
   const [icon, setIcon] = useState<string | null>(null);
   const [iconTouched, setIconTouched] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -458,8 +465,38 @@ function DayModal({
     setDetail("");
     setNoteDate(dayKeyValue);
     setRepeat(false);
+    setCalType("solar");
+    setLunarDay(initialLunar.day);
+    setLunarMonth(initialLunar.month);
+    setLunarYear(initialLunar.year);
+    setLunarLeap(initialLunar.leap);
     setIcon(null);
     setIconTouched(false);
+  }
+
+  // Ngày dương ứng với ngày âm đang chọn: 3 năm liền nhau cho ghi chú lặp lại, 1 năm cho ghi chú một lần.
+  const lunarSolar: { year: number; key: string | null; adjusted: boolean }[] | null =
+    calType === "lunar"
+      ? (repeat ? [lunarYear, lunarYear + 1, lunarYear + 2] : [lunarYear]).map((y) => {
+          const found = lunarToSolar(lunarDay, lunarMonth, y, repeat ? false : lunarLeap);
+          return { year: y, key: found?.key ?? null, adjusted: found?.adjusted ?? false };
+        })
+      : null;
+
+  /** Đổi giữa dương/âm: giữ nguyên ngày đang chọn, chỉ quy đổi sang cách ghi còn lại. */
+  function switchType(next: CalendarType) {
+    if (next === calType) return;
+    if (next === "lunar" && /^\d{4}-\d{2}-\d{2}$/.test(noteDate)) {
+      const d = parseDayKey(noteDate);
+      const l = solarToLunar(d.getDate(), d.getMonth() + 1, d.getFullYear());
+      setLunarDay(l.day);
+      setLunarMonth(l.month);
+      setLunarYear(l.year);
+      setLunarLeap(l.leap);
+    }
+    const firstKey = lunarSolar?.[0]?.key;
+    if (next === "solar" && firstKey) setNoteDate(firstKey);
+    setCalType(next);
   }
 
   function startEdit(note: CalendarNote) {
@@ -468,6 +505,13 @@ function DayModal({
     setDetail(note.detail);
     setNoteDate(note.note_date);
     setRepeat(note.repeat_yearly);
+    setCalType(note.calendar_type);
+    if (note.calendar_type === "lunar") {
+      setLunarDay(note.lunar_day ?? initialLunar.day);
+      setLunarMonth(note.lunar_month ?? initialLunar.month);
+      setLunarYear(note.lunar_year ?? initialLunar.year);
+      setLunarLeap(note.lunar_leap);
+    }
     setIcon(note.icon);
     setIconTouched(true);
     setError(null);
@@ -480,21 +524,45 @@ function DayModal({
       setError("Hãy nhập nội dung ghi chú (ví dụ: Sinh nhật, Họp, Ngày giỗ…).");
       return;
     }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(noteDate)) {
+    let finalDate = noteDate;
+    if (calType === "lunar") {
+      // Ghi chú âm lịch lưu kèm ngày dương gốc; nếu lặp lại thì mỗi năm app tự quy đổi lại.
+      const first = lunarSolar?.[0];
+      if (!first?.key) {
+        setError("Ngày âm này không tồn tại trong năm đã chọn (tháng nhuận chỉ có ở một số năm).");
+        return;
+      }
+      finalDate = first.key;
+    } else if (!/^\d{4}-\d{2}-\d{2}$/.test(noteDate)) {
       setError("Ngày không hợp lệ.");
       return;
     }
     setBusy(true);
     setError(null);
     try {
-      const input = { noteDate, title: cleanTitle, detail: detail.trim(), repeatYearly: repeat, icon };
+      const input = {
+        noteDate: finalDate,
+        title: cleanTitle,
+        detail: detail.trim(),
+        repeatYearly: repeat,
+        icon,
+        calendarType: calType,
+        lunarDay: calType === "lunar" ? lunarDay : null,
+        lunarMonth: calType === "lunar" ? lunarMonth : null,
+        lunarYear: calType === "lunar" ? lunarYear : null,
+        lunarLeap: calType === "lunar" && !repeat ? lunarLeap : false,
+      };
       if (editing) await updateNote(editing.id, input);
       else await createNote(input);
       reset();
       onChanged();
     } catch (err) {
       console.error(err);
-      setError("Không lưu được ghi chú. Hãy thử lại.");
+      setError(
+        err instanceof Error && err.message === "lunar_schema_missing"
+          ? "Chưa bật được ghi chú âm lịch: hãy chạy file SQL 20261127000300_calendar_note_lunar.sql trong Supabase."
+          : "Không lưu được ghi chú. Hãy thử lại.",
+      );
     } finally {
       setBusy(false);
     }
@@ -546,7 +614,12 @@ function DayModal({
                 <div className="min-w-0 flex-1">
                   <p className="break-words text-sm font-semibold text-slate-950">{note.title}</p>
                   {note.detail && <p className="mt-0.5 whitespace-pre-wrap break-words text-sm text-slate-600">{note.detail}</p>}
-                  {note.repeat_yearly && <p className="mt-1 text-xs text-slate-400">Lặp lại hằng năm</p>}
+                  {(note.calendar_type === "lunar" || note.repeat_yearly) && (
+                    <p className="mt-1 text-xs text-slate-400">
+                      {note.calendar_type === "lunar" ? `Theo âm lịch ${note.lunar_day}/${note.lunar_month}${note.lunar_leap ? " nhuận" : ""}` : "Theo dương lịch"}
+                      {note.repeat_yearly ? " · lặp lại hằng năm" : ""}
+                    </p>
+                  )}
                 </div>
                 <button type="button" onClick={() => startEdit(note)} aria-label={`Sửa ${note.title}`} className="grid h-8 w-8 shrink-0 place-items-center rounded-lg text-slate-500 transition hover:bg-slate-100 hover:text-slate-900">
                   <EditIcon className="h-4 w-4" />
@@ -608,18 +681,106 @@ function DayModal({
               </label>
               <textarea id="cal-detail" value={detail} onChange={(e) => setDetail(e.target.value)} maxLength={1000} rows={3} className={inputClass} />
             </div>
-            <div className="flex flex-wrap items-end gap-4">
+            <div>
+              <p className="mb-1.5 text-sm font-medium text-slate-700">Ghi chú theo lịch nào?</p>
+              <div role="group" aria-label="Loại lịch" className="grid grid-cols-2 gap-1 rounded-xl border border-slate-200 bg-white p-1">
+                {([
+                  ["solar", "Dương lịch"],
+                  ["lunar", "Âm lịch"],
+                ] as const).map(([value, label]) => (
+                  <button
+                    key={value}
+                    type="button"
+                    aria-pressed={calType === value}
+                    onClick={() => switchType(value)}
+                    className={`rounded-lg py-2 text-sm font-medium transition ${calType === value ? "bg-black text-white" : "text-slate-600 hover:bg-slate-100"}`}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {calType === "solar" ? (
               <div>
                 <label htmlFor="cal-date" className="mb-1.5 block text-sm font-medium text-slate-700">
                   Ngày (dương lịch)
                 </label>
                 <input id="cal-date" type="date" value={noteDate} onChange={(e) => setNoteDate(e.target.value)} className={inputClass} />
               </div>
-              <label className="flex items-center gap-2 pb-2.5 text-sm text-slate-700">
-                <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} className="h-4 w-4 accent-black" />
-                Lặp lại hằng năm
-              </label>
-            </div>
+            ) : (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-end gap-3">
+                  <div className="w-24">
+                    <label htmlFor="cal-lday" className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Ngày âm
+                    </label>
+                    <select id="cal-lday" value={lunarDay} onChange={(e) => setLunarDay(Number(e.target.value))} className={inputClass}>
+                      {Array.from({ length: 30 }, (_, i) => i + 1).map((d) => (
+                        <option key={d} value={d}>
+                          {d}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="w-24">
+                    <label htmlFor="cal-lmonth" className="mb-1.5 block text-sm font-medium text-slate-700">
+                      Tháng âm
+                    </label>
+                    <select id="cal-lmonth" value={lunarMonth} onChange={(e) => setLunarMonth(Number(e.target.value))} className={inputClass}>
+                      {Array.from({ length: 12 }, (_, i) => i + 1).map((m) => (
+                        <option key={m} value={m}>
+                          {m}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  {!repeat && (
+                    <>
+                      <div className="w-28">
+                        <label htmlFor="cal-lyear" className="mb-1.5 block text-sm font-medium text-slate-700">
+                          Năm âm
+                        </label>
+                        <input
+                          id="cal-lyear"
+                          type="number"
+                          min={1900}
+                          max={2100}
+                          value={lunarYear}
+                          onChange={(e) => setLunarYear(Math.min(2100, Math.max(1900, Number(e.target.value) || lunarYear)))}
+                          className={inputClass}
+                        />
+                      </div>
+                      <label className="flex items-center gap-2 pb-2.5 text-sm text-slate-700">
+                        <input type="checkbox" checked={lunarLeap} onChange={(e) => setLunarLeap(e.target.checked)} className="h-4 w-4 accent-black" />
+                        Tháng nhuận
+                      </label>
+                    </>
+                  )}
+                </div>
+                {lunarSolar && (
+                  <div className="rounded-xl border border-slate-200 bg-white p-3 text-sm">
+                    <p className="text-xs font-medium text-slate-500">{repeat ? "Mỗi năm rơi vào ngày dương khác nhau:" : "Ứng với ngày dương:"}</p>
+                    <ul className="mt-1.5 space-y-1">
+                      {lunarSolar.map((row) => (
+                        <li key={row.year} className="flex flex-wrap items-baseline justify-between gap-2">
+                          <span className="text-slate-500">Năm {yearName(row.year)}</span>
+                          <span className="font-semibold text-slate-950">
+                            {row.key ? viDate(row.key) : "Không có ngày này"}
+                            {row.adjusted ? <span className="font-normal text-slate-400"> · tháng thiếu, tính ngày 29</span> : null}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
+
+            <label className="flex items-center gap-2 text-sm text-slate-700">
+              <input type="checkbox" checked={repeat} onChange={(e) => setRepeat(e.target.checked)} className="h-4 w-4 accent-black" />
+              Lặp lại hằng năm {calType === "lunar" ? "(theo ngày âm)" : "(theo ngày dương)"}
+            </label>
             {error && <FormMessage kind="error">{error}</FormMessage>}
             <div className="flex gap-2">
               <button type="submit" disabled={busy} className={primaryButton}>

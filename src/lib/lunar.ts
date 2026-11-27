@@ -127,3 +127,58 @@ export function lunarLabel(l: LunarDate, withMonth = false): string {
   if (l.day === 1 || withMonth) return `${l.day}/${l.month}${l.leap ? "n" : ""}`;
   return String(l.day);
 }
+
+// ---------------------------------------------------------------------------
+// Đổi ngược âm -> dương. Hai lịch lệch nhau theo từng năm nên ngày âm "15/7" rơi vào
+// ngày dương khác nhau mỗi năm; ở đây dò từng ngày của năm dương để tìm đúng ngày.
+// ---------------------------------------------------------------------------
+type TableRow = { key: string; lunar: LunarDate };
+const yearTables = new Map<number, TableRow[]>();
+
+const pad2 = (n: number) => String(n).padStart(2, "0");
+
+function yearTable(year: number): TableRow[] {
+  const cached = yearTables.get(year);
+  if (cached) return cached;
+  const rows: TableRow[] = [];
+  for (let m = 1; m <= 12; m++) {
+    const total = new Date(year, m, 0).getDate();
+    for (let d = 1; d <= total; d++) rows.push({ key: `${year}-${pad2(m)}-${pad2(d)}`, lunar: solarToLunar(d, m, year) });
+  }
+  yearTables.set(year, rows);
+  return rows;
+}
+
+/** Ngày 30 mà tháng âm đó chỉ có 29 ngày (tháng thiếu) thì tính vào ngày 29 (ngày cuối tháng). */
+function matchesDay(table: TableRow[], i: number, year: number, day: number): boolean {
+  const current = table[i]!.lunar;
+  if (current.day === day) return true;
+  if (day !== 30 || current.day !== 29) return false;
+  const next = table[i + 1]?.lunar ?? solarToLunar(1, 1, year + 1);
+  return next.day === 1;
+}
+
+/** Tất cả ngày dương (yyyy-MM-dd) trong năm dương `year` có ngày âm là `day/month` (tháng thường, không nhuận). */
+export function lunarOccurrences(year: number, month: number, day: number): string[] {
+  const table = yearTable(year);
+  const result: string[] = [];
+  table.forEach((row, i) => {
+    if (row.lunar.leap || row.lunar.month !== month) return;
+    if (matchesDay(table, i, year, day)) result.push(row.key);
+  });
+  return result;
+}
+
+/** Ngày dương (yyyy-MM-dd) của một ngày âm trong năm âm `lunarYear`; null nếu không tồn tại (vd. tháng nhuận không có). */
+export function lunarToSolar(day: number, month: number, lunarYear: number, leap = false): { key: string; adjusted: boolean } | null {
+  // Năm âm bắt đầu quanh tháng 1-2 dương và kết thúc quanh tháng 1-2 năm sau, nên dò cả hai năm dương.
+  for (const solarYear of [lunarYear, lunarYear + 1]) {
+    const table = yearTable(solarYear);
+    for (let i = 0; i < table.length; i++) {
+      const l = table[i]!.lunar;
+      if (l.year !== lunarYear || l.month !== month || l.leap !== leap) continue;
+      if (matchesDay(table, i, solarYear, day)) return { key: table[i]!.key, adjusted: l.day !== day };
+    }
+  }
+  return null;
+}
