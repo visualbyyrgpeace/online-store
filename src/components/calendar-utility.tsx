@@ -45,6 +45,7 @@ export function CalendarUtility() {
   const [view, setView] = useState<{ y: number; m: number } | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [version, setVersion] = useState(0);
+  const [showYear, setShowYear] = useState(false);
 
   // Ngày hôm nay lấy theo giờ máy người xem (chỉ ở trình duyệt, tránh lệch với bản dựng tĩnh).
   useEffect(() => {
@@ -107,12 +108,27 @@ export function CalendarUtility() {
   return (
     <div>
       <div className="mb-5 flex flex-wrap items-end justify-between gap-4">
-        <div>
-          <p className="text-xs font-medium uppercase tracking-widest text-slate-400">Năm {monthLunarYear}</p>
-          <p className="mt-1 text-4xl font-semibold tracking-tight text-slate-950 sm:text-5xl">
-            {MONTH_NAMES[view.m]} <span className="text-slate-400">{view.y}</span>
-          </p>
-        </div>
+        {isAdmin ? (
+          <button
+            type="button"
+            onClick={() => setShowYear(true)}
+            aria-label={`Xem các ngày quan trọng năm ${view.y}`}
+            title="Xem các ngày quan trọng trong năm"
+            className="group -m-1 rounded-xl p-1 text-left outline-none transition hover:bg-slate-100 focus-visible:ring-2 focus-visible:ring-black"
+          >
+            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Năm {monthLunarYear}</p>
+            <p className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
+              {MONTH_NAMES[view.m]} <span className="text-slate-400 transition group-hover:text-slate-900">{view.y}</span>
+            </p>
+          </button>
+        ) : (
+          <div>
+            <p className="text-[11px] font-medium uppercase tracking-widest text-slate-400">Năm {monthLunarYear}</p>
+            <p className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-950 sm:text-3xl">
+              {MONTH_NAMES[view.m]} <span className="text-slate-400">{view.y}</span>
+            </p>
+          </div>
+        )}
         <div className="flex items-center gap-2">
           <button type="button" onClick={() => go(-1)} aria-label="Tháng trước" className="grid h-10 w-10 place-items-center rounded-xl border border-slate-300 bg-white text-slate-700 transition hover:bg-slate-50 active:scale-95">
             <ChevronLeftIcon className="h-4 w-4" />
@@ -211,7 +227,24 @@ export function CalendarUtility() {
           })}
         </div>
       </div>
-      <p className="mt-3 text-xs text-slate-400">Số lớn là ngày dương, số nhỏ là ngày âm. Mùng 1 âm lịch hiện kèm tháng.</p>
+
+      {showYear && isAdmin && (
+        <YearModal
+          year={view.y}
+          lunarYear={monthLunarYear}
+          loading={yearNotes.status === "loading"}
+          failed={yearNotes.status === "error"}
+          notes={yearNotes.status === "success" ? yearNotes.data : []}
+          today={today}
+          onClose={() => setShowYear(false)}
+          onPick={(key) => {
+            const d = parseDayKey(key);
+            setView({ y: d.getFullYear(), m: d.getMonth() });
+            setShowYear(false);
+            setSelected(key);
+          }}
+        />
+      )}
 
       {selected && (
         <DayModal
@@ -225,6 +258,77 @@ export function CalendarUtility() {
         />
       )}
     </div>
+  );
+}
+
+function YearModal({
+  year,
+  lunarYear,
+  loading,
+  failed,
+  notes,
+  today,
+  onClose,
+  onPick,
+}: {
+  year: number;
+  lunarYear: string;
+  loading: boolean;
+  failed: boolean;
+  notes: CalendarNote[];
+  today: string;
+  onClose: () => void;
+  onPick: (key: string) => void;
+}) {
+  const sorted = useMemo(() => [...notes].sort((a, b) => (a.note_date < b.note_date ? -1 : a.note_date > b.note_date ? 1 : a.title.localeCompare(b.title))), [notes]);
+  const months = useMemo(() => {
+    const groups = new Map<number, CalendarNote[]>();
+    for (const note of sorted) {
+      const m = Number(note.note_date.slice(5, 7)) - 1;
+      const list = groups.get(m);
+      if (list) list.push(note);
+      else groups.set(m, [note]);
+    }
+    return [...groups.entries()];
+  }, [sorted]);
+
+  return (
+    <Modal open onClose={onClose} title={`Ngày quan trọng năm ${year}`} description={`Năm ${lunarYear} · ${sorted.length} ghi chú`}>
+      {loading && <div className="shimmer h-24 rounded-xl" aria-busy="true" />}
+      {failed && <FormMessage kind="error">Không tải được ghi chú.</FormMessage>}
+      {!loading && !failed && sorted.length === 0 && <p className="py-6 text-center text-sm text-slate-500">Năm này chưa có ngày quan trọng nào.</p>}
+      <div className="space-y-5">
+        {months.map(([m, list]) => (
+          <section key={m}>
+            <h3 className="mb-2 text-xs font-semibold uppercase tracking-widest text-slate-400">{MONTH_NAMES[m]}</h3>
+            <ul className="divide-y divide-slate-100 overflow-hidden rounded-xl border border-slate-200">
+              {list.map((note) => {
+                const d = parseDayKey(note.note_date);
+                const lunar = solarToLunar(d.getDate(), d.getMonth() + 1, d.getFullYear());
+                const past = note.note_date < today;
+                return (
+                  <li key={note.id}>
+                    <button type="button" onClick={() => onPick(note.note_date)} className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition hover:bg-slate-50 ${past ? "opacity-50" : ""}`}>
+                      <span className="grid h-11 w-11 shrink-0 place-items-center rounded-lg bg-black text-white">
+                        <span className="text-base font-semibold leading-none">{d.getDate()}</span>
+                        <span className="-mt-2 text-[9px] leading-none text-white/70">{WEEK_HEAD[d.getDay()]}</span>
+                      </span>
+                      <span className="min-w-0 flex-1">
+                        <span className="block truncate text-sm font-semibold text-slate-950">{note.title}</span>
+                        <span className="block text-xs text-slate-500">
+                          {pad(d.getDate())}/{pad(d.getMonth() + 1)} · Âm lịch {lunar.day}/{lunar.month}
+                          {note.repeat_yearly ? " · Hằng năm" : ""}
+                        </span>
+                      </span>
+                    </button>
+                  </li>
+                );
+              })}
+            </ul>
+          </section>
+        ))}
+      </div>
+    </Modal>
   );
 }
 
