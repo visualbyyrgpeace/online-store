@@ -7,6 +7,7 @@ import {
   adjustImage,
   applyWater,
   collectParts,
+  densityFactor,
   disposeModel,
   exportFileName,
   findPartIds,
@@ -30,6 +31,21 @@ import {
   type Viewer,
   type WaterParams,
 } from "@/lib/studio-3d";
+import {
+  KIND_LABEL,
+  TUNE_FIELDS,
+  TUNE_PRESETS,
+  applyTunePreset,
+  buildTunes,
+  resetTune,
+  setTuneKind,
+  setTuneParam,
+  setWaterQuick,
+  tuneInfo,
+  type TuneEntry,
+  type TuneInfo,
+  type TuneKind,
+} from "@/lib/studio-3d-materials";
 import { STUDIO_BRAND, STUDIO_MODELS, type StudioModel } from "@/lib/studio-3d-catalog";
 import { validateImageFile } from "@/utils/image";
 import {
@@ -192,6 +208,121 @@ function ColorPick({ value, onChange, label }: { value: string; onChange: (hex: 
   );
 }
 
+/* ---------- bảng chỉnh sâu một vật liệu (nước / nhựa / thủy tinh) ---------- */
+
+const fmt = (v: number, step: number) => v.toFixed(step < 0.01 ? 3 : step < 0.1 ? 2 : 1);
+
+function TunePanel({
+  info,
+  onParam,
+  onKind,
+  onPreset,
+  onReset,
+}: {
+  info: TuneInfo;
+  onParam: (id: number, k: string, v: number | string | boolean) => void;
+  onKind: (id: number, kind: TuneKind) => void;
+  onPreset: (id: number, index: number) => void;
+  onReset: (id: number) => void;
+}) {
+  const fields = TUNE_FIELDS[info.kind].filter((f) => !f.when || f.when(info.params));
+  const groups = [...new Set(fields.map((f) => f.group))];
+  const presets = TUNE_PRESETS[info.kind];
+  return (
+    <div className="space-y-3.5 rounded-2xl border border-slate-200 bg-slate-50/60 p-3.5">
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate text-sm font-semibold text-slate-900">{info.name}</p>
+        <span className="shrink-0 rounded-full bg-slate-900 px-2.5 py-0.5 text-[11px] font-medium text-white">{KIND_LABEL[info.kind]}</span>
+      </div>
+
+      {info.canSwitch && (
+        <div role="radiogroup" aria-label="Chất liệu" className="grid grid-cols-2 rounded-xl bg-slate-200/70 p-1">
+          {(["plastic", "glass"] as const).map((k) => (
+            <button
+              key={k}
+              type="button"
+              role="radio"
+              aria-checked={info.kind === k}
+              onClick={() => onKind(info.id, k)}
+              className={`rounded-lg px-2 py-1.5 text-xs font-medium transition ${
+                info.kind === k ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+              }`}
+            >
+              {KIND_LABEL[k]}
+            </button>
+          ))}
+        </div>
+      )}
+
+      <select
+        aria-label="Chọn mẫu nhanh"
+        value=""
+        onChange={(e) => {
+          if (e.target.value !== "") onPreset(info.id, Number(e.target.value));
+        }}
+        className="h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-800"
+      >
+        <option value="">Chọn mẫu nhanh…</option>
+        {presets.map((pr, i) => (
+          <option key={pr.name} value={i}>
+            {pr.name}
+          </option>
+        ))}
+      </select>
+
+      {groups.map((g) => (
+        <div key={g} className="space-y-3">
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{g}</p>
+          {fields
+            .filter((f) => f.group === g)
+            .map((f) => {
+              if (f.type === "color") {
+                const hex = typeof info.params[f.k] === "string" ? (info.params[f.k] as string) : "#ffffff";
+                return (
+                  <div key={f.k} className="flex items-center justify-between gap-3 text-xs font-medium text-slate-600">
+                    <span>{f.label}</span>
+                    <ColorPick value={hex} label={f.label} onChange={(h) => onParam(info.id, f.k, h)} />
+                  </div>
+                );
+              }
+              if (f.type === "check") {
+                return (
+                  <label key={f.k} className="flex items-center gap-2.5 text-xs font-medium text-slate-600">
+                    <input
+                      type="checkbox"
+                      checked={!!info.params[f.k]}
+                      onChange={(e) => onParam(info.id, f.k, e.target.checked)}
+                      className="h-4 w-4 accent-black"
+                    />
+                    {f.label}
+                  </label>
+                );
+              }
+              const step = f.step ?? 0.01;
+              const val = typeof info.params[f.k] === "number" ? (info.params[f.k] as number) : (f.min ?? 0);
+              return (
+                <Slider
+                  key={f.k}
+                  label={f.label}
+                  value={val}
+                  min={f.min ?? 0}
+                  max={f.max ?? 1}
+                  step={step}
+                  display={fmt(val, step)}
+                  onChange={(v) => onParam(info.id, f.k, v)}
+                />
+              );
+            })}
+        </div>
+      ))}
+
+      <button type="button" onClick={() => onReset(info.id)} className={`${btn} h-9 w-full text-xs`}>
+        Đặt lại vật liệu này
+      </button>
+    </div>
+  );
+}
+
 /* ---------- thành phần chính ---------- */
 
 type Phase = "loading" | "ready" | "error";
@@ -214,6 +345,7 @@ export function Studio3DUtility() {
   const stopFlyRef = useRef<(() => void) | null>(null);
   const tokenRef = useRef(0);
   const waterParamsRef = useRef<WaterParams>(DEFAULT_WATER);
+  const tunesRef = useRef<TuneEntry[]>([]);
   const labelIdsRef = useRef<number[]>([]);
   const capIdsRef = useRef<number[]>([]);
   const labelCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -224,6 +356,7 @@ export function Studio3DUtility() {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const [tunes, setTunes] = useState<TuneInfo[]>([]);
   const [hasWater, setHasWater] = useState(false);
   const [hasCap, setHasCap] = useState(false);
   const [hasLabel, setHasLabel] = useState(false);
@@ -270,6 +403,7 @@ export function Studio3DUtility() {
     if (v) disposeModel(v, storeRef.current);
     viewerRef.current = null;
     storeRef.current = null;
+    tunesRef.current = [];
     bgColorRef.current = null;
     poseRef.current = null;
   }, []);
@@ -344,6 +478,8 @@ export function Studio3DUtility() {
 
         const { store } = collectParts(v.root);
         storeRef.current = store;
+        tunesRef.current = buildTunes(v, store, cfg);
+        setTunes(tunesRef.current.map(tuneInfo));
         const waterMat = store.mats.find((m) => m.userData?.rvKind === "water");
         labelIdsRef.current = findPartIds(store, model.labelMesh, /label|nhan|sleeve/);
         capIdsRef.current = findPartIds(store, model.capMesh, /(^|[^a-z])(cap|nap|lid)([^a-z]|$)/);
@@ -413,8 +549,54 @@ export function Studio3DUtility() {
     setWaterHex(hex);
     setWaterDensity(density);
     setWaterTouched(true);
-    if (storeRef.current) applyWater(storeRef.current, hex, density, waterParamsRef.current);
+    const water = tunesRef.current.find((t) => t.kind === "water");
+    if (water) {
+      // đi qua bảng chỉnh sâu để màu nhanh và các thông số tinh chỉnh luôn khớp nhau
+      setWaterQuick(water, hex, densityFactor(density));
+      setTunes(tunesRef.current.map(tuneInfo));
+    } else if (storeRef.current) {
+      applyWater(storeRef.current, hex, density, waterParamsRef.current);
+    }
   };
+
+  /* ----- chỉnh sâu vật liệu ----- */
+
+  const withTune = (id: number, fn: (e: TuneEntry) => void) => {
+    const e = tunesRef.current.find((t) => t.id === id);
+    if (!e) return;
+    fn(e);
+    setTunes(tunesRef.current.map(tuneInfo));
+  };
+
+  const changeTuneParam = (id: number, k: string, value: number | string | boolean) =>
+    withTune(id, (e) => {
+      setTuneParam(e, k, value);
+      if (e.kind === "water" && k === "color" && typeof value === "string") {
+        setWaterHex(value);
+        setWaterTouched(true);
+      }
+    });
+
+  const changeTuneKind = (id: number, kind: TuneKind) => withTune(id, (e) => setTuneKind(e, kind));
+
+  const changeTunePreset = (id: number, index: number) =>
+    withTune(id, (e) => {
+      applyTunePreset(e, index);
+      if (e.kind === "water" && typeof e.params.color === "string") {
+        setWaterHex(e.params.color);
+        setWaterTouched(true);
+      }
+    });
+
+  const resetTuneOne = (id: number) =>
+    withTune(id, (e) => {
+      resetTune(e);
+      if (e.kind === "water") {
+        setWaterDensity(0.5);
+        setWaterTouched(false);
+        setWaterHex(`#${e.mat.attenuationColor.getHexString()}`);
+      }
+    });
 
   /* ----- màu nắp ----- */
 
@@ -533,6 +715,8 @@ export function Studio3DUtility() {
     const store = storeRef.current;
     if (!v || !store) return;
     resetAllParts(store);
+    for (const e of tunesRef.current) resetTune(e);
+    setTunes(tunesRef.current.map(tuneInfo));
     labelCanvasRef.current = null;
     setLabelOn(false);
     setAdjust(DEFAULT_ADJUST);
@@ -762,6 +946,24 @@ export function Studio3DUtility() {
                     ))}
                     <ColorPick value={capHex} label="Chọn màu nắp tự do" onChange={changeCap} />
                   </div>
+                </Section>
+              )}
+
+              {tunes.length > 0 && (
+                <Section title="Chỉnh sâu vật liệu" defaultOpen={false}>
+                  <p className="-mt-1 text-xs leading-5 text-slate-500">
+                    Chỉnh riêng từng vật liệu: nước, nhựa, thủy tinh. Chọn mẫu nhanh hoặc kéo từng thanh.
+                  </p>
+                  {tunes.map((t) => (
+                    <TunePanel
+                      key={t.id}
+                      info={t}
+                      onParam={changeTuneParam}
+                      onKind={changeTuneKind}
+                      onPreset={changeTunePreset}
+                      onReset={resetTuneOne}
+                    />
+                  ))}
                 </Section>
               )}
 
