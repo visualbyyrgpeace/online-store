@@ -249,3 +249,10 @@ export const CalendarDaysIcon = (p: IconProps) => (
     <path d="M3.5 10h17M8 3v4M16 3v4M8 14h.01M12 14h.01M16 14h.01M8 17h.01M12 17h.01" />
   </Svg>
 );
+
+export const CubeIcon = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M12 3 4 7.5v9L12 21l8-4.5v-9z" />
+    <path d="m4 7.5 8 4.5 8-4.5M12 12v9" />
+  </Svg>
+);

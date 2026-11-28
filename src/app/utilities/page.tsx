@@ -1,6 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
-import { ArrowRightIcon, CalendarDaysIcon, ClipboardIcon, FilmIcon, FolderIcon, FontIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
+import { ArrowRightIcon, CalendarDaysIcon, ClipboardIcon, CubeIcon, FilmIcon, FolderIcon, FontIcon, FrameIcon, PromptIcon, QrIcon } from "@/components/utilities/tool-icons";
 
 export const metadata: Metadata = { title: "Tiện ích" };
 
@@ -60,6 +60,13 @@ const tools = [
     description: "Xem ngày dương và âm lịch, bấm vào ngày để biết can chi; admin có thể ghi chú ngày đặc biệt.",
     tags: ["Dương · Âm lịch", "Can chi", "Ghi chú (admin)"],
     Icon: CalendarDaysIcon,
+  },
+  {
+    href: "/utilities/3d-studio/",
+    name: "3D Studio",
+    description: "Tải mô hình 3D (GLB) lên, xoay xem, đổi màu từng bộ phận, thay ảnh nhãn và xuất ảnh PNG.",
+    tags: ["Tải mô hình GLB", "Đổi màu · thay nhãn", "Xuất PNG"],
+    Icon: CubeIcon,
   },
 ];
 
