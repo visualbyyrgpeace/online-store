@@ -33,8 +33,10 @@ import {
 } from "@/lib/studio-3d";
 import {
   KIND_LABEL,
+  TONE_LABEL,
   TUNE_FIELDS,
   TUNE_PRESETS,
+  applyLight,
   applyTunePreset,
   buildTunes,
   resetTune,
@@ -42,6 +44,8 @@ import {
   setTuneParam,
   setWaterQuick,
   tuneInfo,
+  type LightState,
+  type ToneName,
   type TuneEntry,
   type TuneInfo,
   type TuneKind,
@@ -346,6 +350,8 @@ export function Studio3DUtility() {
   const tokenRef = useRef(0);
   const waterParamsRef = useRef<WaterParams>(DEFAULT_WATER);
   const tunesRef = useRef<TuneEntry[]>([]);
+  const lightRef = useRef<LightState | null>(null); // null = người dùng chưa đổi
+  const lightBaseRef = useRef<LightState>({ gain: 1, rotate: 0, tone: "Neutral" });
   const labelIdsRef = useRef<number[]>([]);
   const capIdsRef = useRef<number[]>([]);
   const labelCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -357,6 +363,7 @@ export function Studio3DUtility() {
   const [notice, setNotice] = useState<string | null>(null);
 
   const [tunes, setTunes] = useState<TuneInfo[]>([]);
+  const [light, setLight] = useState<LightState>({ gain: 1, rotate: 0, tone: "Neutral" });
   const [hasWater, setHasWater] = useState(false);
   const [hasCap, setHasCap] = useState(false);
   const [hasLabel, setHasLabel] = useState(false);
@@ -500,6 +507,13 @@ export function Studio3DUtility() {
         v.renderer.toneMappingExposure = s.exposure;
         v.controls.autoRotate = s.autoRotate;
         if (s.lite) v.setQuality?.("light");
+        lightBaseRef.current = {
+          gain: typeof sceneCfg.envGain === "number" ? sceneCfg.envGain : 1,
+          rotate: 0,
+          tone: (sceneCfg.tone === "ACES" || sceneCfg.tone === "AgX" ? sceneCfg.tone : "Neutral") as ToneName,
+        };
+        setLight(lightRef.current ?? lightBaseRef.current);
+        if (lightRef.current) applyLight(v, lightRef.current);
         const canvas = labelCanvasRef.current;
         if (canvas && labelIdsRef.current.length) {
           for (const id of labelIdsRef.current) {
@@ -703,6 +717,13 @@ export function Studio3DUtility() {
     viewerRef.current?.setQuality?.(on ? "light" : "high");
   };
 
+  const changeLight = (patch: Partial<LightState>) => {
+    const next = { ...light, ...patch };
+    setLight(next);
+    lightRef.current = next;
+    if (viewerRef.current) applyLight(viewerRef.current, next);
+  };
+
   const changeExposure = (value: number) => {
     setExposure(value);
     if (viewerRef.current) viewerRef.current.renderer.toneMappingExposure = value;
@@ -733,6 +754,9 @@ export function Studio3DUtility() {
     applyBackground(defaultBg, false);
     setExposure(1);
     v.renderer.toneMappingExposure = 1;
+    lightRef.current = null;
+    setLight(lightBaseRef.current);
+    applyLight(v, lightBaseRef.current);
     setAutoRotate(false);
     v.controls.autoRotate = false;
     resetView();
@@ -1029,6 +1053,27 @@ export function Studio3DUtility() {
                   Chế độ nhẹ (máy yếu)
                 </label>
                 <Slider label="Độ sáng" value={exposure} min={0.6} max={1.6} step={0.01} display={`${Math.round(exposure * 100)}%`} onChange={changeExposure} />
+                <Slider label="Cường độ ánh sáng môi trường" value={light.gain} min={0.2} max={2.5} step={0.01} display={`${Math.round(light.gain * 100)}%`} onChange={(gain) => changeLight({ gain })} />
+                <Slider label="Xoay hướng ánh sáng (dời vệt phản chiếu)" value={light.rotate} min={-180} max={180} step={1} display={`${light.rotate}°`} onChange={(rotate) => changeLight({ rotate })} />
+                <div>
+                  <p className="mb-1.5 text-xs font-medium text-slate-600">Kiểu màu và tương phản</p>
+                  <div role="radiogroup" aria-label="Kiểu tone mapping" className="grid grid-cols-3 rounded-2xl bg-slate-100 p-1">
+                    {(["Neutral", "ACES", "AgX"] as const).map((t) => (
+                      <button
+                        key={t}
+                        type="button"
+                        role="radio"
+                        aria-checked={light.tone === t}
+                        onClick={() => changeLight({ tone: t })}
+                        className={`rounded-xl px-2 py-2 text-xs font-medium transition ${
+                          light.tone === t ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                        }`}
+                      >
+                        {TONE_LABEL[t]}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               </Section>
 
               <Section title="Tải ảnh về">

@@ -485,3 +485,22 @@ export function resetTune(e: TuneEntry) {
   e.sig = sigOf(m);
   m.needsUpdate = true;
 }
+
+/* ---------- ánh sáng môi trường (kính và nước ăn sáng rất mạnh theo hướng đèn) ---------- */
+
+export type ToneName = "Neutral" | "ACES" | "AgX";
+export type LightState = { gain: number; rotate: number; tone: ToneName };
+
+export const TONE_LABEL: Record<ToneName, string> = { Neutral: "Trung thực", ACES: "Tương phản", AgX: "Mềm" };
+// Mã của THREE.NeutralToneMapping / ACESFilmicToneMapping / AgXToneMapping
+const TONE_ID: Record<ToneName, number> = { Neutral: 7, ACES: 4, AgX: 6 };
+
+type LightScene = { environmentIntensity?: number; environmentRotation?: { y: number } };
+
+/** Đổi cường độ, hướng xoay của ánh sáng môi trường và kiểu tone mapping. Ảnh PNG xuất ra dùng đúng thiết lập này. */
+export function applyLight(v: Viewer, s: LightState) {
+  const sc = v.scene as unknown as LightScene;
+  sc.environmentIntensity = s.gain;
+  if (sc.environmentRotation) sc.environmentRotation.y = (s.rotate * Math.PI) / 180;
+  (v.renderer as unknown as { toneMapping: number }).toneMapping = TONE_ID[s.tone];
+}
