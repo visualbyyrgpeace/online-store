@@ -336,7 +336,8 @@ export function buildTunes(v: Viewer, store: PartStore, cfg: Record<string, unkn
     const b = new api.Box3().setFromObject(v.root);
     if (!b.isEmpty()) {
       const s = [b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z].sort((a, c) => a - c);
-      shared = s[1] > 0 ? s[1] : 0;
+      const mid = s[1] ?? 0;
+      shared = mid > 0 ? mid : 0;
     }
   }
   for (const e of entries) if (!(e.unit > 0)) e.unit = shared > 0 ? shared : 1;
