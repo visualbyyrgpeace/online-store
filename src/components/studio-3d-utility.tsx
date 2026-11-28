@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type DragEvent, type ReactNode } from "react";
 import {
   DEFAULT_ADJUST,
   EXPORT_SIZES,
@@ -9,9 +9,9 @@ import {
   collectParts,
   disposeModel,
   exportFileName,
+  findPartIds,
   flyTo,
   friendlyLoadError,
-  guessLabelPart,
   loadViewer,
   maxRenderSize,
   prepareImage,
@@ -21,16 +21,16 @@ import {
   resetAllParts,
   restoreImage,
   setPartColor,
-  validateModelFile,
   viewPose,
   webglAvailable,
   type Col,
   type ImageAdjust,
-  type PartInfo,
   type PartStore,
   type ViewName,
   type Viewer,
+  type WaterParams,
 } from "@/lib/studio-3d";
+import { STUDIO_BRAND, STUDIO_MODELS, type StudioModel } from "@/lib/studio-3d-catalog";
 import { validateImageFile } from "@/utils/image";
 import {
   ChevronDownIcon,
@@ -39,7 +39,6 @@ import {
   DownloadIcon,
   ImageIcon,
   RefreshIcon,
-  UploadIcon,
 } from "@/components/utilities/tool-icons";
 
 /* ---------- giao diện nhỏ dùng lại ---------- */
@@ -64,14 +63,19 @@ const WATER_COLORS = [
   { name: "Việt quất", hex: "#3b5bdb" },
 ];
 
-const BG_COLORS = ["#eef0f3", "#ffffff", "#f5efe6", "#dfe9f3", "#fde7e0", "#1f2937"];
+const BG_COLORS = ["#e9e9ec", "#ffffff", "#f5efe6", "#dfe9f3", "#fde7e0", "#1f2937"];
 
-const KIND_LABEL: Record<PartInfo["kind"], string> = {
-  water: "Nước",
-  plastic: "Nhựa",
-  glass: "Kính",
-  other: "",
-};
+const CAP_COLORS = [
+  { name: "Đen", hex: "#111827" },
+  { name: "Trắng", hex: "#f8fafc" },
+  { name: "Bạc", hex: "#cbd5e1" },
+  { name: "Đỏ", hex: "#dc2626" },
+  { name: "Cam", hex: "#f97316" },
+  { name: "Vàng", hex: "#facc15" },
+  { name: "Xanh lá", hex: "#16a34a" },
+  { name: "Xanh dương", hex: "#2563eb" },
+  { name: "Hồng", hex: "#ec4899" },
+];
 
 const VIEWS: { id: ViewName; label: string }[] = [
   { id: "front", label: "Trước" },
@@ -190,7 +194,16 @@ function ColorPick({ value, onChange, label }: { value: string; onChange: (hex: 
 
 /* ---------- thành phần chính ---------- */
 
-type Phase = "empty" | "loading" | "ready";
+type Phase = "loading" | "ready" | "error";
+
+const DEFAULT_WATER: WaterParams = { tint: 0.35, turbidity: 0 };
+
+function waterParamsFrom(cfg: Record<string, unknown>): WaterParams {
+  const mats = Array.isArray(cfg.materials) ? (cfg.materials as { kind?: string; params?: Record<string, unknown> }[]) : [];
+  const p = mats.find((m) => m.kind === "water")?.params;
+  const n = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? v : d);
+  return p ? { tint: n(p.tint, DEFAULT_WATER.tint), turbidity: n(p.turbidity, DEFAULT_WATER.turbidity) } : DEFAULT_WATER;
+}
 
 export function Studio3DUtility() {
   const hostRef = useRef<HTMLDivElement>(null);
@@ -200,28 +213,32 @@ export function Studio3DUtility() {
   const poseRef = useRef<ReturnType<typeof readPose> | null>(null);
   const stopFlyRef = useRef<(() => void) | null>(null);
   const tokenRef = useRef(0);
-  const modelInput = useRef<HTMLInputElement>(null);
+  const waterParamsRef = useRef<WaterParams>(DEFAULT_WATER);
+  const labelIdsRef = useRef<number[]>([]);
+  const capIdsRef = useRef<number[]>([]);
+  const labelCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const imageInput = useRef<HTMLInputElement>(null);
 
-  const [phase, setPhase] = useState<Phase>("empty");
+  const [modelId, setModelId] = useState<string>(STUDIO_MODELS[0]?.id ?? "");
+  const [phase, setPhase] = useState<Phase>("loading");
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const [fileName, setFileName] = useState("");
-  const [dragging, setDragging] = useState(false);
 
-  const [parts, setParts] = useState<PartInfo[]>([]);
-  const [partColors, setPartColors] = useState<Record<number, string>>({});
+  const [hasWater, setHasWater] = useState(false);
+  const [hasCap, setHasCap] = useState(false);
+  const [hasLabel, setHasLabel] = useState(false);
   const [waterHex, setWaterHex] = useState("#bfe6ff");
   const [waterDensity, setWaterDensity] = useState(0.5);
   const [waterTouched, setWaterTouched] = useState(false);
+  const [capHex, setCapHex] = useState("#111827");
+  const [capTouched, setCapTouched] = useState(false);
 
-  const [imagePart, setImagePart] = useState<number | null>(null);
-  const [adjustByPart, setAdjustByPart] = useState<Record<number, ImageAdjust>>({});
-  const [imageOn, setImageOn] = useState<Record<number, boolean>>({});
+  const [labelOn, setLabelOn] = useState(false);
+  const [adjust, setAdjust] = useState<ImageAdjust>(DEFAULT_ADJUST);
   const [imageBusy, setImageBusy] = useState(false);
   const [imageDrag, setImageDrag] = useState(false);
 
-  const [bgHex, setBgHex] = useState(BG_COLORS[0] ?? "#eef0f3");
+  const [bgHex, setBgHex] = useState(BG_COLORS[0] ?? "#e9e9ec");
   const [bgTransparent, setBgTransparent] = useState(false);
   const [exposure, setExposure] = useState(1);
   const [autoRotate, setAutoRotate] = useState(false);
@@ -229,21 +246,16 @@ export function Studio3DUtility() {
   const [exportSize, setExportSize] = useState<number>(2048);
   const [exportTransparent, setExportTransparent] = useState(false);
   const [exporting, setExporting] = useState<"save" | "copy" | null>(null);
-
-  // Giá trị mới nhất cho các hàm async (tránh đóng băng state cũ).
-  const settings = useRef({ bgHex, bgTransparent, exposure, autoRotate });
-  useEffect(() => {
-    settings.current = { bgHex, bgTransparent, exposure, autoRotate };
-  }, [bgHex, bgTransparent, exposure, autoRotate]);
   const [sizeLimit, setSizeLimit] = useState(Infinity);
 
-  const hasWater = parts.some((p) => p.kind === "water");
-  const colorParts = useMemo(() => parts.filter((p) => p.kind !== "water"), [parts]);
-  const canCopy = typeof ClipboardItem !== "undefined" && !!navigator.clipboard?.write;
+  // Giá trị mới nhất cho các hàm async (tránh đóng băng state cũ).
+  const settings = useRef({ bgHex, bgTransparent, exposure, autoRotate, adjust });
+  useEffect(() => {
+    settings.current = { bgHex, bgTransparent, exposure, autoRotate, adjust };
+  }, [bgHex, bgTransparent, exposure, autoRotate, adjust]);
 
-  const say = useCallback((msg: string) => {
-    setNotice(msg);
-  }, []);
+  const canCopy = typeof ClipboardItem !== "undefined" && !!navigator.clipboard?.write;
+  const say = useCallback((msg: string) => setNotice(msg), []);
 
   useEffect(() => {
     if (!notice) return;
@@ -261,8 +273,6 @@ export function Studio3DUtility() {
     poseRef.current = null;
   }, []);
 
-  useEffect(() => () => teardown(), [teardown]);
-
   const applyBackground = useCallback((hex: string, transparent: boolean) => {
     const v = viewerRef.current;
     const col = bgColorRef.current;
@@ -277,33 +287,49 @@ export function Studio3DUtility() {
     }
   }, []);
 
-  /* ----- nạp mô hình ----- */
+  /* ----- nạp một loại chai trong danh mục ----- */
 
-  const openModel = useCallback(
-    async (file: File) => {
-      const problem = await validateModelFile(file);
-      if (problem) {
-        say(problem);
-        return;
-      }
-      if (!webglAvailable()) {
-        setError("Trình duyệt hoặc thiết bị này không hỗ trợ hiển thị 3D (WebGL). Hãy thử Chrome, Edge hoặc Safari bản mới.");
-        setPhase("empty");
-        return;
-      }
+  const loadModel = useCallback(
+    async (model: StudioModel) => {
       const token = ++tokenRef.current;
+      setModelId(model.id);
       setError(null);
       setPhase("loading");
       teardown();
-      const url = URL.createObjectURL(file);
       try {
+        if (!webglAvailable()) {
+          throw new Error("no_webgl");
+        }
         const mount = await loadViewer();
         const host = hostRef.current;
         if (!host || token !== tokenRef.current) return;
+
+        let cfg: Record<string, unknown> = {};
+        try {
+          const r = await fetch(model.config);
+          if (r.ok) cfg = (await r.json()) as Record<string, unknown>;
+        } catch {
+          /* thiếu config.json: dùng mặc định */
+        }
+        waterParamsRef.current = waterParamsFrom(cfg);
+        const sceneCfg = (cfg.scene ?? {}) as Record<string, unknown>;
+
         const v = await mount(host, {
-          glb: url,
+          glb: model.glb,
+          hdri: model.hdri?.url,
+          hdriType: model.hdri?.type,
           config: {
-            scene: { env: "product", envGain: 1, exposure: 1, tone: "Neutral", bgMode: "color", bg: "#eef0f3", autoRotate: false },
+            ...cfg,
+            scene: {
+              ...sceneCfg,
+              env: model.hdri ? "hdri" : "product",
+              tone: sceneCfg.tone ?? "Neutral",
+              bgMode: "color",
+              bg: BG_COLORS[0] ?? "#e9e9ec",
+              hdriBg: false,
+              autoRotate: false,
+              exposure: 1,
+            },
           },
         });
         if (token !== tokenRef.current) {
@@ -315,45 +341,69 @@ export function Studio3DUtility() {
         poseRef.current = readPose(v);
         setSizeLimit(maxRenderSize(v));
 
-        const { store, parts: found } = collectParts(v.root);
+        const { store } = collectParts(v.root);
         storeRef.current = store;
-        setParts(found);
-        setPartColors(Object.fromEntries(found.map((p) => [p.id, p.color])));
-        const firstWater = found.find((p) => p.kind === "water");
-        const mat = firstWater ? store.mats[firstWater.id] : undefined;
-        setWaterHex(mat?.attenuationColor ? `#${mat.attenuationColor.getHexString()}` : "#bfe6ff");
+        const waterMat = store.mats.find((m) => m.userData?.rvKind === "water");
+        labelIdsRef.current = findPartIds(store, model.labelMesh, /label|nhan|sleeve/);
+        capIdsRef.current = findPartIds(store, model.capMesh, /(^|[^a-z])(cap|nap|lid)([^a-z]|$)/);
+
+        setHasWater(!!waterMat);
+        setHasCap(capIdsRef.current.length > 0);
+        setHasLabel(labelIdsRef.current.length > 0);
+        setWaterHex(waterMat?.attenuationColor ? `#${waterMat.attenuationColor.getHexString()}` : "#bfe6ff");
         setWaterDensity(0.5);
         setWaterTouched(false);
-        setImagePart(guessLabelPart(found));
-        setAdjustByPart({});
-        setImageOn({});
-        setFileName(file.name);
+        const capMat = store.mats[capIdsRef.current[0] ?? -1];
+        setCapHex(capMat?.color ? `#${capMat.color.getHexString()}` : "#111827");
+        setCapTouched(false);
 
-        // giữ nguyên lựa chọn nền / sáng / tự xoay người dùng đã đặt
+        // giữ nguyên nền / độ sáng / tự xoay đã chọn, và nhãn người dùng đã tải
         const s = settings.current;
         applyBackground(s.bgHex, s.bgTransparent);
         v.renderer.toneMappingExposure = s.exposure;
         v.controls.autoRotate = s.autoRotate;
+        const canvas = labelCanvasRef.current;
+        if (canvas && labelIdsRef.current.length) {
+          for (const id of labelIdsRef.current) {
+            replaceImage(v, store, id, canvas);
+            adjustImage(store, id, s.adjust);
+          }
+          setLabelOn(true);
+        } else {
+          setLabelOn(false);
+        }
         setPhase("ready");
       } catch (e) {
         if (token !== tokenRef.current) return;
         console.error(e);
         teardown();
-        setError(friendlyLoadError(e));
-        setPhase("empty");
-      } finally {
-        URL.revokeObjectURL(url);
+        setError(
+          e instanceof Error && e.message === "no_webgl"
+            ? "Trình duyệt hoặc thiết bị này không hỗ trợ hiển thị 3D. Hãy thử Chrome, Edge hoặc Safari bản mới."
+            : friendlyLoadError(e),
+        );
+        setPhase("error");
       }
     },
-    [applyBackground, say, teardown],
+    [applyBackground, teardown],
   );
 
-  const onModelDrop = (e: DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const f = e.dataTransfer.files[0];
-    if (f) void openModel(f);
-  };
+  useEffect(() => {
+    const first = STUDIO_MODELS[0];
+    const t = window.setTimeout(() => {
+      if (first) void loadModel(first);
+      else {
+        setError("Chưa có mẫu chai nào trong danh mục.");
+        setPhase("error");
+      }
+    }, 0);
+    return () => {
+      window.clearTimeout(t);
+      // eslint-disable-next-line react-hooks/exhaustive-deps -- cố ý: tăng bộ đếm để hủy lần nạp đang chạy
+      tokenRef.current++;
+      teardown();
+    };
+  }, [loadModel, teardown]);
 
   /* ----- màu nước ----- */
 
@@ -361,25 +411,24 @@ export function Studio3DUtility() {
     setWaterHex(hex);
     setWaterDensity(density);
     setWaterTouched(true);
-    if (storeRef.current) applyWater(storeRef.current, hex, density);
+    if (storeRef.current) applyWater(storeRef.current, hex, density, waterParamsRef.current);
   };
 
-  /* ----- màu bộ phận ----- */
+  /* ----- màu nắp ----- */
 
-  const changePartColor = (id: number, hex: string) => {
-    setPartColors((c) => ({ ...c, [id]: hex }));
-    if (storeRef.current) setPartColor(storeRef.current, id, hex);
+  const changeCap = (hex: string) => {
+    setCapHex(hex);
+    setCapTouched(true);
+    const store = storeRef.current;
+    if (store) for (const id of capIdsRef.current) setPartColor(store, id, hex);
   };
 
-  /* ----- ảnh nhãn ----- */
-
-  const adjust = imagePart !== null ? (adjustByPart[imagePart] ?? DEFAULT_ADJUST) : DEFAULT_ADJUST;
-  const imageActive = imagePart !== null && !!imageOn[imagePart];
+  /* ----- nhãn ----- */
 
   const loadImage = async (file: File) => {
     const v = viewerRef.current;
     const store = storeRef.current;
-    if (!v || !store || imagePart === null) return;
+    if (!v || !store || !labelIdsRef.current.length) return;
     const problem = validateImageFile(file);
     if (problem) {
       say(problem.replace("chỉ nhận ảnh JPG, PNG hoặc WebP", "chỉ nhận ảnh PNG hoặc JPG"));
@@ -388,13 +437,19 @@ export function Studio3DUtility() {
     setImageBusy(true);
     try {
       const canvas = await prepareImage(file);
-      if (!replaceImage(v, store, imagePart, canvas)) {
-        say("Bộ phận này chưa thể thay ảnh. Hãy chọn bộ phận khác.");
+      let ok = false;
+      for (const id of labelIdsRef.current) {
+        if (replaceImage(v, store, id, canvas)) {
+          adjustImage(store, id, adjust);
+          ok = true;
+        }
+      }
+      if (!ok) {
+        say("Chưa thay được ảnh cho nhãn này.");
         return;
       }
-      const a = adjustByPart[imagePart] ?? DEFAULT_ADJUST;
-      adjustImage(store, imagePart, a);
-      setImageOn((o) => ({ ...o, [imagePart]: true }));
+      labelCanvasRef.current = canvas;
+      setLabelOn(true);
     } catch (e) {
       say(e instanceof Error ? e.message : "Không thể dùng ảnh này.");
     } finally {
@@ -403,17 +458,19 @@ export function Studio3DUtility() {
   };
 
   const changeAdjust = (patch: Partial<ImageAdjust>) => {
-    if (imagePart === null) return;
     const next = { ...adjust, ...patch };
-    setAdjustByPart((m) => ({ ...m, [imagePart]: next }));
-    if (storeRef.current) adjustImage(storeRef.current, imagePart, next);
+    setAdjust(next);
+    const store = storeRef.current;
+    if (store) for (const id of labelIdsRef.current) adjustImage(store, id, next);
   };
 
   const restoreLabel = () => {
-    if (imagePart === null || !storeRef.current) return;
-    restoreImage(storeRef.current, imagePart);
-    setImageOn((o) => ({ ...o, [imagePart]: false }));
-    setAdjustByPart((m) => ({ ...m, [imagePart]: DEFAULT_ADJUST }));
+    const store = storeRef.current;
+    if (!store) return;
+    for (const id of labelIdsRef.current) restoreImage(store, id);
+    labelCanvasRef.current = null;
+    setLabelOn(false);
+    setAdjust(DEFAULT_ADJUST);
   };
 
   const onImageDrop = (e: DragEvent) => {
@@ -469,15 +526,17 @@ export function Studio3DUtility() {
     const store = storeRef.current;
     if (!v || !store) return;
     resetAllParts(store);
-    setPartColors(Object.fromEntries(parts.map((p) => [p.id, p.color])));
-    const firstWater = parts.find((p) => p.kind === "water");
-    const mat = firstWater ? store.mats[firstWater.id] : undefined;
-    setWaterHex(mat?.attenuationColor ? `#${mat.attenuationColor.getHexString()}` : "#bfe6ff");
+    labelCanvasRef.current = null;
+    setLabelOn(false);
+    setAdjust(DEFAULT_ADJUST);
+    const waterMat = store.mats.find((m) => m.userData?.rvKind === "water");
+    setWaterHex(waterMat?.attenuationColor ? `#${waterMat.attenuationColor.getHexString()}` : "#bfe6ff");
     setWaterDensity(0.5);
     setWaterTouched(false);
-    setAdjustByPart({});
-    setImageOn({});
-    const defaultBg = BG_COLORS[0] ?? "#eef0f3";
+    const capMat = store.mats[capIdsRef.current[0] ?? -1];
+    setCapHex(capMat?.color ? `#${capMat.color.getHexString()}` : "#111827");
+    setCapTouched(false);
+    const defaultBg = BG_COLORS[0] ?? "#e9e9ec";
     setBgHex(defaultBg);
     setBgTransparent(false);
     applyBackground(defaultBg, false);
@@ -532,215 +591,187 @@ export function Studio3DUtility() {
   /* ---------- giao diện ---------- */
 
   const ready = phase === "ready";
+  const active = STUDIO_MODELS.find((m) => m.id === modelId);
 
   return (
-    <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
-      <input
-        ref={modelInput}
-        type="file"
-        accept=".glb,.gltf,model/gltf-binary,model/gltf+json"
-        className="sr-only"
-        tabIndex={-1}
-        onChange={(e) => {
-          const f = e.target.files?.[0];
-          e.target.value = "";
-          if (f) void openModel(f);
-        }}
-      />
-
-      {/* Khung 3D */}
-      <div className="min-w-0">
-        <div
-          onDragOver={(e) => {
-            e.preventDefault();
-            setDragging(true);
-          }}
-          onDragLeave={() => setDragging(false)}
-          onDrop={onModelDrop}
-          className={`relative h-[58vh] min-h-[340px] overflow-hidden rounded-3xl border bg-slate-100 lg:h-[680px] ${
-            dragging ? "border-slate-900 ring-2 ring-slate-900" : "border-slate-200"
-          }`}
-          style={
-            ready && bgTransparent
-              ? {
-                  backgroundImage:
-                    "linear-gradient(45deg,#e5e7eb 25%,transparent 25%,transparent 75%,#e5e7eb 75%),linear-gradient(45deg,#e5e7eb 25%,#fff 25%,#fff 75%,#e5e7eb 75%)",
-                  backgroundSize: "20px 20px",
-                  backgroundPosition: "0 0,10px 10px",
-                }
-              : undefined
-          }
-        >
-          {/* canvas của viewer được gắn vào đây; React không đặt phần tử con vào div này */}
-          <div ref={hostRef} className="absolute inset-0" />
-
-          {phase === "empty" && (
-            <div className="absolute inset-0 grid place-items-center p-6">
-              <div className="w-full max-w-md rounded-3xl border-2 border-dashed border-slate-300 bg-white/80 p-8 text-center backdrop-blur">
-                <span className="mx-auto mb-5 grid h-14 w-14 place-items-center rounded-2xl bg-slate-950 text-white">
-                  <CubeIcon className="h-7 w-7" />
-                </span>
-                <h2 className="text-lg font-semibold text-slate-950">Tải mô hình 3D lên</h2>
-                <p className="mt-1.5 text-sm leading-6 text-slate-500">
-                  Kéo thả tệp <strong className="font-semibold text-slate-700">.glb</strong> vào đây hoặc chọn từ máy. Tối đa 100 MB.
-                </p>
-                {error && (
-                  <p role="alert" className="mt-4 rounded-xl bg-red-50 px-3 py-2.5 text-left text-sm leading-5 text-red-700">
-                    {error}
-                  </p>
-                )}
-                <button type="button" onClick={() => modelInput.current?.click()} className={`${btnPrimary} mt-5`}>
-                  <UploadIcon className="h-4 w-4" />
-                  Chọn mô hình
-                </button>
-                <p className="mt-4 text-xs text-slate-400">Tệp được xử lý ngay trên thiết bị của bạn, không tải lên máy chủ.</p>
-              </div>
-            </div>
-          )}
-
-          {phase === "loading" && (
-            <div className="absolute inset-0 grid place-items-center bg-white/70 backdrop-blur-sm" role="status" aria-live="polite">
-              <div className="w-64 text-center">
-                <p className="text-sm font-medium text-slate-700">Đang tải mô hình…</p>
-                <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
-                  <div className="h-full w-1/3 animate-[studio-slide_1.1s_ease-in-out_infinite] rounded-full bg-black" />
-                </div>
-              </div>
-            </div>
-          )}
-
-          {ready && (
-            <>
-              <div className="absolute left-3 top-3 flex flex-wrap gap-2">
+    <div className="space-y-5">
+      <div>
+        <p className="mb-2.5 text-sm font-semibold text-slate-900">Chọn loại chai</p>
+        <ul className="flex gap-3 overflow-x-auto pb-1" aria-label="Danh sách loại chai">
+          {STUDIO_MODELS.map((m) => {
+            const on = m.id === modelId;
+            return (
+              <li key={m.id} className="shrink-0">
                 <button
                   type="button"
-                  onClick={toggleRotate}
-                  aria-pressed={autoRotate}
-                  className={`${chip} ${autoRotate ? "border-black bg-black text-white" : "border-slate-200 bg-white/85 text-slate-800 hover:border-slate-900"}`}
+                  aria-pressed={on}
+                  disabled={phase === "loading"}
+                  onClick={() => (on && ready ? undefined : void loadModel(m))}
+                  className={`flex w-44 items-center gap-3 rounded-2xl border bg-white p-3 text-left transition disabled:cursor-wait ${
+                    on ? "border-slate-900 ring-2 ring-slate-900" : "border-slate-200 hover:border-slate-900"
+                  }`}
                 >
-                  Tự xoay
+                  {m.thumb ? (
+                    // eslint-disable-next-line @next/next/no-img-element
+                    <img src={m.thumb} alt="" className="h-12 w-12 shrink-0 rounded-xl bg-slate-100 object-cover" />
+                  ) : (
+                    <span className="grid h-12 w-12 shrink-0 place-items-center rounded-xl bg-slate-950 text-white">
+                      <CubeIcon className="h-6 w-6" />
+                    </span>
+                  )}
+                  <span className="min-w-0">
+                    <span className="block truncate text-sm font-semibold text-slate-950">{m.name}</span>
+                    <span className="line-clamp-2 text-xs leading-4 text-slate-500">{m.description}</span>
+                  </span>
                 </button>
-                <button type="button" onClick={resetView} className={`${chip} border-slate-200 bg-white/85 text-slate-800 hover:border-slate-900`}>
-                  Đặt lại góc nhìn
-                </button>
-              </div>
-              <div className="absolute right-3 top-3 flex max-w-[55%] items-center gap-2">
-                <span className="truncate rounded-full bg-white/85 px-3 py-2 text-xs text-slate-500 backdrop-blur" title={fileName}>
-                  {fileName}
-                </span>
-                <button type="button" onClick={() => modelInput.current?.click()} className={`${chip} shrink-0 border-slate-200 bg-white/85 text-slate-800 hover:border-slate-900`}>
-                  Đổi mô hình
-                </button>
-              </div>
-              <div className="absolute inset-x-0 bottom-3 flex justify-center">
-                <div className="flex gap-1 rounded-full bg-white/85 p-1 shadow-sm backdrop-blur" role="group" aria-label="Góc nhìn nhanh">
-                  {VIEWS.map((v) => (
-                    <button
-                      key={v.id}
-                      type="button"
-                      onClick={() => goView(v.id)}
-                      className="rounded-full px-3.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-900 hover:text-white"
-                    >
-                      {v.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            </>
-          )}
-        </div>
-
-        <div className="mt-3 min-h-6" aria-live="polite">
-          {notice && (
-            <p role="status" className="inline-block rounded-xl bg-slate-900 px-3.5 py-2 text-sm text-white">
-              {notice}
-            </p>
-          )}
-        </div>
+              </li>
+            );
+          })}
+        </ul>
       </div>
 
-      {/* Bảng điều khiển */}
-      <aside className="min-w-0 space-y-3 lg:max-h-[720px] lg:overflow-y-auto lg:pr-1">
-        {!ready ? (
-          <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-500">
-            <p className="font-semibold text-slate-900">Sau khi tải mô hình, bạn có thể:</p>
-            <ul className="mt-2 list-disc space-y-1 pl-5">
-              <li>Xoay, phóng to, kéo xem mọi góc.</li>
-              <li>Đổi màu từng bộ phận, màu nước, màu nền.</li>
-              <li>Thay ảnh nhãn rồi chỉnh vị trí, độ lớn.</li>
-              <li>Xuất ảnh PNG 1080, 2048 hoặc 4096 px.</li>
-            </ul>
-          </div>
-        ) : (
-          <>
-            {hasWater && (
-              <Section title="Màu nước">
-                <div className="flex flex-wrap items-center gap-2">
-                  {WATER_COLORS.map((c) => (
-                    <Swatch key={c.hex} color={c.hex} label={c.name} active={waterTouched && waterHex.toLowerCase() === c.hex} onClick={() => changeWater(c.hex, waterDensity)} />
-                  ))}
-                  <ColorPick value={waterHex} label="Chọn màu tự do" onChange={(hex) => changeWater(hex, waterDensity)} />
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,1fr)_22rem]">
+        {/* Khung 3D */}
+        <div className="min-w-0">
+          <div
+            className="relative h-[58vh] min-h-[340px] overflow-hidden rounded-3xl border border-slate-200 bg-slate-100 lg:h-[680px]"
+            style={
+              ready && bgTransparent
+                ? {
+                    backgroundImage:
+                      "linear-gradient(45deg,#e5e7eb 25%,transparent 25%,transparent 75%,#e5e7eb 75%),linear-gradient(45deg,#e5e7eb 25%,#fff 25%,#fff 75%,#e5e7eb 75%)",
+                    backgroundSize: "20px 20px",
+                    backgroundPosition: "0 0,10px 10px",
+                  }
+                : undefined
+            }
+          >
+            {/* canvas của viewer được gắn vào đây; React không đặt phần tử con vào div này */}
+            <div ref={hostRef} className="absolute inset-0" />
+
+            {phase === "loading" && (
+              <div className="absolute inset-0 grid place-items-center bg-white/70 backdrop-blur-sm" role="status" aria-live="polite">
+                <div className="w-64 text-center">
+                  <p className="text-sm font-medium text-slate-700">Đang tải {active?.name.toLowerCase() ?? "mẫu chai"}…</p>
+                  <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-slate-200">
+                    <div className="h-full w-1/3 animate-[studio-slide_1.1s_ease-in-out_infinite] rounded-full bg-black" />
+                  </div>
                 </div>
-                <Slider
-                  label="Nhạt  ↔  Đậm"
-                  value={waterDensity}
-                  min={0}
-                  max={1}
-                  step={0.01}
-                  display={waterDensity === 0.5 ? "Gốc" : `${Math.round(waterDensity * 100)}%`}
-                  onChange={(d) => changeWater(waterHex, d)}
-                />
-              </Section>
+              </div>
             )}
 
-            {colorParts.length > 0 && (
-              <Section title="Màu từng bộ phận" defaultOpen={!hasWater}>
-                <ul className="space-y-2.5">
-                  {colorParts.map((p) => (
-                    <li key={p.id} className="flex items-center justify-between gap-3">
-                      <span className="min-w-0">
-                        <span className="block truncate text-sm text-slate-800">{p.name}</span>
-                        {KIND_LABEL[p.kind] && <span className="text-xs text-slate-400">{KIND_LABEL[p.kind]}</span>}
-                      </span>
-                      <ColorPick value={partColors[p.id] ?? p.color} label={`Đổi màu ${p.name}`} onChange={(hex) => changePartColor(p.id, hex)} />
-                    </li>
-                  ))}
-                </ul>
-              </Section>
+            {phase === "error" && (
+              <div className="absolute inset-0 grid place-items-center p-6">
+                <div className="w-full max-w-sm rounded-3xl bg-white p-6 text-center shadow-sm">
+                  <p role="alert" className="text-sm leading-6 text-slate-700">
+                    {error}
+                  </p>
+                  {active && (
+                    <button type="button" onClick={() => void loadModel(active)} className={`${btnPrimary} mt-4`}>
+                      <RefreshIcon className="h-4 w-4" />
+                      Thử lại
+                    </button>
+                  )}
+                </div>
+              </div>
             )}
 
-            <Section title="Ảnh nhãn" defaultOpen={false}>
-              <input
-                ref={imageInput}
-                type="file"
-                accept="image/png,image/jpeg,image/webp"
-                className="sr-only"
-                tabIndex={-1}
-                onChange={(e) => {
-                  const f = e.target.files?.[0];
-                  e.target.value = "";
-                  if (f) void loadImage(f);
-                }}
-              />
-              {colorParts.length === 0 ? (
-                <p className="text-sm text-slate-500">Mô hình này không có bộ phận nào để thay ảnh.</p>
-              ) : (
-                <>
-                  <label className="block text-xs font-medium text-slate-600">
-                    Dán ảnh lên bộ phận
-                    <select
-                      value={imagePart ?? ""}
-                      onChange={(e) => setImagePart(Number(e.target.value))}
-                      className="mt-1.5 h-10 w-full rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-900 outline-none focus:border-slate-900"
-                    >
-                      {colorParts.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          {p.name}
-                        </option>
-                      ))}
-                    </select>
-                  </label>
+            {ready && (
+              <>
+                <div className="absolute left-3 top-3 flex flex-wrap gap-2">
+                  <button
+                    type="button"
+                    onClick={toggleRotate}
+                    aria-pressed={autoRotate}
+                    className={`${chip} ${autoRotate ? "border-black bg-black text-white" : "border-slate-200 bg-white/85 text-slate-800 hover:border-slate-900"}`}
+                  >
+                    Tự xoay
+                  </button>
+                  <button type="button" onClick={resetView} className={`${chip} border-slate-200 bg-white/85 text-slate-800 hover:border-slate-900`}>
+                    Đặt lại góc nhìn
+                  </button>
+                </div>
+                <div className="absolute inset-x-0 bottom-3 flex justify-center">
+                  <div className="flex gap-1 rounded-full bg-white/85 p-1 shadow-sm backdrop-blur" role="group" aria-label="Góc nhìn nhanh">
+                    {VIEWS.map((v) => (
+                      <button
+                        key={v.id}
+                        type="button"
+                        onClick={() => goView(v.id)}
+                        className="rounded-full px-3.5 py-1.5 text-xs font-medium text-slate-700 transition hover:bg-slate-900 hover:text-white"
+                      >
+                        {v.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
 
+          <div className="mt-3 min-h-6" aria-live="polite">
+            {notice && (
+              <p role="status" className="inline-block rounded-xl bg-slate-900 px-3.5 py-2 text-sm text-white">
+                {notice}
+              </p>
+            )}
+          </div>
+        </div>
+
+        {/* Bảng điều khiển */}
+        <aside className="min-w-0 space-y-3 lg:max-h-[720px] lg:overflow-y-auto lg:pr-1">
+          {!ready ? (
+            <div className="rounded-2xl border border-slate-200 bg-white p-5 text-sm leading-6 text-slate-500">
+              <p className="font-semibold text-slate-900">{STUDIO_BRAND.title}</p>
+              <p className="mt-1">{STUDIO_BRAND.tagline}</p>
+            </div>
+          ) : (
+            <>
+              {hasWater && (
+                <Section title="Màu nước">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {WATER_COLORS.map((c) => (
+                      <Swatch key={c.hex} color={c.hex} label={c.name} active={waterTouched && waterHex.toLowerCase() === c.hex} onClick={() => changeWater(c.hex, waterDensity)} />
+                    ))}
+                    <ColorPick value={waterHex} label="Chọn màu tự do" onChange={(hex) => changeWater(hex, waterDensity)} />
+                  </div>
+                  <Slider
+                    label="Nhạt  ↔  Đậm"
+                    value={waterDensity}
+                    min={0}
+                    max={1}
+                    step={0.01}
+                    display={waterDensity === 0.5 ? "Gốc" : `${Math.round(waterDensity * 100)}%`}
+                    onChange={(d) => changeWater(waterHex, d)}
+                  />
+                </Section>
+              )}
+
+              {hasCap && (
+                <Section title="Màu nắp chai">
+                  <div className="flex flex-wrap items-center gap-2">
+                    {CAP_COLORS.map((c) => (
+                      <Swatch key={c.hex} color={c.hex} label={c.name} active={capTouched && capHex.toLowerCase() === c.hex} onClick={() => changeCap(c.hex)} />
+                    ))}
+                    <ColorPick value={capHex} label="Chọn màu nắp tự do" onChange={changeCap} />
+                  </div>
+                </Section>
+              )}
+
+              {hasLabel && (
+                <Section title="Nhãn chai" defaultOpen={false}>
+                  <input
+                    ref={imageInput}
+                    type="file"
+                    accept="image/png,image/jpeg,image/webp"
+                    className="sr-only"
+                    tabIndex={-1}
+                    onChange={(e) => {
+                      const f = e.target.files?.[0];
+                      e.target.value = "";
+                      if (f) void loadImage(f);
+                    }}
+                  />
                   <div
                     onDragOver={(e) => {
                       e.preventDefault();
@@ -752,88 +783,88 @@ export function Studio3DUtility() {
                   >
                     <ImageIcon className="mx-auto h-6 w-6 text-slate-400" />
                     <p className="mt-1.5 text-xs text-slate-500">Kéo thả ảnh PNG / JPG vào đây</p>
-                    <button type="button" disabled={imageBusy || imagePart === null} onClick={() => imageInput.current?.click()} className={`${btn} mt-2.5 h-9`}>
-                      {imageBusy ? "Đang xử lý…" : imageActive ? "Chọn ảnh khác" : "Chọn ảnh"}
+                    <button type="button" disabled={imageBusy} onClick={() => imageInput.current?.click()} className={`${btn} mt-2.5 h-9`}>
+                      {imageBusy ? "Đang xử lý…" : labelOn ? "Chọn ảnh khác" : "Chọn ảnh nhãn"}
                     </button>
                   </div>
 
-                  <Slider label="Phóng to / thu nhỏ" value={adjust.zoom} min={0.5} max={3} step={0.01} display={`${adjust.zoom.toFixed(2)}×`} disabled={!imageActive} onChange={(zoom) => changeAdjust({ zoom })} />
-                  <Slider label="Dịch ngang" value={adjust.shiftX} min={-0.5} max={0.5} step={0.005} display={`${Math.round(adjust.shiftX * 100)}%`} disabled={!imageActive} onChange={(shiftX) => changeAdjust({ shiftX })} />
-                  <Slider label="Dịch dọc" value={adjust.shiftY} min={-0.5} max={0.5} step={0.005} display={`${Math.round(adjust.shiftY * 100)}%`} disabled={!imageActive} onChange={(shiftY) => changeAdjust({ shiftY })} />
-                  <Slider label="Xoay" value={adjust.rotate} min={-180} max={180} step={1} display={`${adjust.rotate}°`} disabled={!imageActive} onChange={(rotate) => changeAdjust({ rotate })} />
+                  <Slider label="Phóng to / thu nhỏ" value={adjust.zoom} min={0.5} max={3} step={0.01} display={`${adjust.zoom.toFixed(2)}×`} disabled={!labelOn} onChange={(zoom) => changeAdjust({ zoom })} />
+                  <Slider label="Dịch ngang" value={adjust.shiftX} min={-0.5} max={0.5} step={0.005} display={`${Math.round(adjust.shiftX * 100)}%`} disabled={!labelOn} onChange={(shiftX) => changeAdjust({ shiftX })} />
+                  <Slider label="Dịch dọc" value={adjust.shiftY} min={-0.5} max={0.5} step={0.005} display={`${Math.round(adjust.shiftY * 100)}%`} disabled={!labelOn} onChange={(shiftY) => changeAdjust({ shiftY })} />
+                  <Slider label="Xoay" value={adjust.rotate} min={-180} max={180} step={1} display={`${adjust.rotate}°`} disabled={!labelOn} onChange={(rotate) => changeAdjust({ rotate })} />
 
                   <label className="flex items-center gap-2.5 text-sm text-slate-700">
-                    <input type="checkbox" checked={adjust.flip} disabled={!imageActive} onChange={(e) => changeAdjust({ flip: e.target.checked })} className="h-4 w-4 accent-black" />
+                    <input type="checkbox" checked={adjust.flip} disabled={!labelOn} onChange={(e) => changeAdjust({ flip: e.target.checked })} className="h-4 w-4 accent-black" />
                     Lật ngang
                   </label>
 
-                  <button type="button" disabled={!imageActive} onClick={restoreLabel} className={`${btn} w-full`}>
+                  <button type="button" disabled={!labelOn} onClick={restoreLabel} className={`${btn} w-full`}>
                     Khôi phục nhãn gốc
                   </button>
-                </>
+                </Section>
               )}
-            </Section>
 
-            <Section title="Nền và ánh sáng" defaultOpen={false}>
-              <div className="flex flex-wrap items-center gap-2">
-                {BG_COLORS.map((c) => (
-                  <Swatch key={c} color={c} label={`Nền ${c}`} active={!bgTransparent && bgHex.toLowerCase() === c} onClick={() => changeBg(c)} />
-                ))}
-                <ColorPick value={bgHex} label="Chọn màu nền tự do" onChange={changeBg} />
-              </div>
-              <label className="flex items-center gap-2.5 text-sm text-slate-700">
-                <input type="checkbox" checked={bgTransparent} onChange={(e) => changeTransparent(e.target.checked)} className="h-4 w-4 accent-black" />
-                Nền trong suốt
-              </label>
-              <Slider label="Độ sáng" value={exposure} min={0.6} max={1.6} step={0.01} display={`${Math.round(exposure * 100)}%`} onChange={changeExposure} />
-            </Section>
+              <Section title="Nền và ánh sáng" defaultOpen={false}>
+                <div className="flex flex-wrap items-center gap-2">
+                  {BG_COLORS.map((c) => (
+                    <Swatch key={c} color={c} label={`Nền ${c}`} active={!bgTransparent && bgHex.toLowerCase() === c} onClick={() => changeBg(c)} />
+                  ))}
+                  <ColorPick value={bgHex} label="Chọn màu nền tự do" onChange={changeBg} />
+                </div>
+                <label className="flex items-center gap-2.5 text-sm text-slate-700">
+                  <input type="checkbox" checked={bgTransparent} onChange={(e) => changeTransparent(e.target.checked)} className="h-4 w-4 accent-black" />
+                  Nền trong suốt
+                </label>
+                <Slider label="Độ sáng" value={exposure} min={0.6} max={1.6} step={0.01} display={`${Math.round(exposure * 100)}%`} onChange={changeExposure} />
+              </Section>
 
-            <Section title="Xuất ảnh">
-              <div role="radiogroup" aria-label="Kích thước ảnh" className="grid grid-cols-3 rounded-2xl bg-slate-100 p-1">
-                {EXPORT_SIZES.map((s) => {
-                  const tooBig = s > sizeLimit;
-                  return (
-                    <button
-                      key={s}
-                      type="button"
-                      role="radio"
-                      aria-checked={exportSize === s}
-                      disabled={tooBig}
-                      title={tooBig ? "Thiết bị này không đủ sức xuất cỡ này" : undefined}
-                      onClick={() => setExportSize(s)}
-                      className={`rounded-xl px-2 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
-                        exportSize === s ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
-                      }`}
-                    >
-                      {s}
-                    </button>
-                  );
-                })}
-              </div>
-              <p className="-mt-2 text-xs text-slate-400">Số pixel của cạnh dài nhất.</p>
-              <label className="flex items-center gap-2.5 text-sm text-slate-700">
-                <input type="checkbox" checked={exportTransparent || bgTransparent} disabled={bgTransparent} onChange={(e) => setExportTransparent(e.target.checked)} className="h-4 w-4 accent-black" />
-                Xuất nền trong suốt
-              </label>
-              <button type="button" disabled={exporting !== null} onClick={() => void doExport("save")} className={`${btnPrimary} w-full`}>
-                <DownloadIcon className="h-4 w-4" />
-                {exporting === "save" ? "Đang tạo ảnh…" : "Tải ảnh PNG"}
-              </button>
-              {canCopy && (
-                <button type="button" disabled={exporting !== null} onClick={() => void doExport("copy")} className={`${btn} w-full`}>
-                  <CopyImageIcon className="h-4 w-4" />
-                  {exporting === "copy" ? "Đang sao chép…" : "Sao chép ảnh"}
+              <Section title="Tải ảnh về">
+                <div role="radiogroup" aria-label="Kích thước ảnh" className="grid grid-cols-3 rounded-2xl bg-slate-100 p-1">
+                  {EXPORT_SIZES.map((s) => {
+                    const tooBig = s > sizeLimit;
+                    return (
+                      <button
+                        key={s}
+                        type="button"
+                        role="radio"
+                        aria-checked={exportSize === s}
+                        disabled={tooBig}
+                        title={tooBig ? "Thiết bị này không đủ sức xuất cỡ này" : undefined}
+                        onClick={() => setExportSize(s)}
+                        className={`rounded-xl px-2 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-40 ${
+                          exportSize === s ? "bg-white text-slate-950 shadow-sm" : "text-slate-500 hover:text-slate-900"
+                        }`}
+                      >
+                        {s}
+                      </button>
+                    );
+                  })}
+                </div>
+                <p className="-mt-2 text-xs text-slate-400">Số pixel của cạnh dài nhất.</p>
+                <label className="flex items-center gap-2.5 text-sm text-slate-700">
+                  <input type="checkbox" checked={exportTransparent || bgTransparent} disabled={bgTransparent} onChange={(e) => setExportTransparent(e.target.checked)} className="h-4 w-4 accent-black" />
+                  Xuất nền trong suốt
+                </label>
+                <button type="button" disabled={exporting !== null} onClick={() => void doExport("save")} className={`${btnPrimary} w-full`}>
+                  <DownloadIcon className="h-4 w-4" />
+                  {exporting === "save" ? "Đang tạo ảnh…" : "Tải ảnh PNG"}
                 </button>
-              )}
-            </Section>
+                {canCopy && (
+                  <button type="button" disabled={exporting !== null} onClick={() => void doExport("copy")} className={`${btn} w-full`}>
+                    <CopyImageIcon className="h-4 w-4" />
+                    {exporting === "copy" ? "Đang sao chép…" : "Sao chép ảnh"}
+                  </button>
+                )}
+              </Section>
 
-            <button type="button" onClick={resetAll} className={`${btn} w-full`}>
-              <RefreshIcon className="h-4 w-4" />
-              Đặt lại tất cả
-            </button>
-          </>
-        )}
-      </aside>
+              <button type="button" onClick={resetAll} className={`${btn} w-full`}>
+                <RefreshIcon className="h-4 w-4" />
+                Đặt lại tất cả
+              </button>
+            </>
+          )}
+        </aside>
+      </div>
 
       <style>{`@keyframes studio-slide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}`}</style>
     </div>

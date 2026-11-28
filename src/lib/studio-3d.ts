@@ -7,7 +7,6 @@
 const BASE = process.env.NEXT_PUBLIC_BASE_PATH ?? "";
 export const VIEWER_SRC = `${BASE}/3d-studio/viewer.js`;
 
-export const MAX_MODEL_BYTES = 100 * 1024 * 1024;
 export const MAX_TEXTURE_PX = 2048;
 
 /* ---------- kiểu tối thiểu của các đối tượng Three mà viewer trả về ---------- */
@@ -44,6 +43,7 @@ export type Mat = {
 type Obj = {
   isMesh?: boolean;
   name: string;
+  parent?: Obj | null;
   material?: Mat | Mat[];
   geometry?: { dispose(): void };
   traverse(cb: (o: Obj) => void): void;
@@ -68,12 +68,12 @@ export type Viewer = {
 };
 type MountFn = (
   el: HTMLElement,
-  opts: { glb: string; config: Record<string, unknown> },
+  opts: { glb: string; config: Record<string, unknown>; hdri?: string; hdriType?: string },
 ) => Promise<Viewer>;
 
 declare global {
   interface Window {
-    MaterialViewer?: { mount: MountFn };
+    MaterialViewer?: { mount: MountFn; Texture?: new (img: unknown) => Tex };
   }
 }
 
@@ -109,27 +109,11 @@ export function webglAvailable(): boolean {
   }
 }
 
-/* ---------- đọc & kiểm tra file mô hình ---------- */
-
-export async function validateModelFile(file: File): Promise<string | null> {
-  const name = file.name.slice(0, 60);
-  if (!/\.(glb|gltf)$/i.test(file.name)) return `${name}: chỉ nhận mô hình định dạng GLB (hoặc GLTF đã đóng gói).`;
-  if (file.size === 0) return `${name}: tệp rỗng.`;
-  if (file.size > MAX_MODEL_BYTES) return `${name}: mô hình lớn hơn ${MAX_MODEL_BYTES / 1024 / 1024} MB.`;
-  if (/\.glb$/i.test(file.name)) {
-    const magic = await file.slice(0, 4).text();
-    if (magic !== "glTF") return `${name}: tệp này không phải mô hình GLB hợp lệ.`;
-  }
-  return null;
-}
-
 export function friendlyLoadError(e: unknown): string {
   const msg = e instanceof Error ? e.message : String(e);
   if (msg === "viewer_load_failed" || msg === "viewer_missing")
-    return "Không tải được bộ hiển thị 3D. Hãy kiểm tra kết nối mạng rồi tải lại trang.";
-  if (/external|\.bin|404|Failed to load buffer|Couldn't load/i.test(msg))
-    return "Mô hình này cần thêm tệp đi kèm (ví dụ .bin hoặc ảnh). Hãy xuất lại thành một tệp GLB duy nhất.";
-  return "Không đọc được mô hình. Hãy thử xuất lại tệp GLB từ phần mềm 3D rồi tải lên lần nữa.";
+    return "Không tải được bộ hiển thị 3D. Hãy kiểm tra kết nối mạng rồi thử lại.";
+  return "Không tải được mẫu chai này. Hãy kiểm tra kết nối mạng rồi thử lại.";
 }
 
 /* ---------- danh sách bộ phận (vật liệu) ---------- */
@@ -145,17 +129,25 @@ type Original = {
   replaced: Tex | null; // texture do người dùng tạo (cần dispose)
 };
 
-export type PartStore = { mats: Mat[]; originals: Map<Mat, Original> };
+export type PartStore = {
+  mats: Mat[];
+  originals: Map<Mat, Original>;
+  meshes: { chain: string[]; mat: Mat }[]; // chain = [tên mesh, tên nhóm cha, ...]
+};
 
 export function collectParts(root: Obj): { store: PartStore; parts: PartInfo[] } {
   const seen = new Map<Mat, string>(); // vật liệu -> tên mesh đầu tiên dùng nó
+  const meshes: PartStore["meshes"] = [];
   root.traverse((o) => {
     if (!o.isMesh || !o.material) return;
+    const chain: string[] = [];
+    for (let n: Obj | null | undefined = o; n; n = n.parent) if (n.name) chain.push(n.name);
     for (const m of Array.isArray(o.material) ? o.material : [o.material]) {
       if (!seen.has(m)) seen.set(m, o.name);
+      meshes.push({ chain, mat: m });
     }
   });
-  const store: PartStore = { mats: [], originals: new Map() };
+  const store: PartStore = { mats: [], originals: new Map(), meshes };
   const parts: PartInfo[] = [];
   const used = new Map<string, number>();
   for (const [m, meshName] of seen) {
@@ -184,11 +176,22 @@ export function collectParts(root: Obj): { store: PartStore; parts: PartInfo[] }
   return { store, parts };
 }
 
-/** Đoán bộ phận nhãn: tên chứa label / nhan / sleeve; nếu không có thì bộ phận đầu tiên có ảnh. */
-export function guessLabelPart(parts: PartInfo[]): number | null {
-  const usable = parts.filter((p) => p.kind !== "water");
-  const byName = usable.find((p) => /label|nhan|nhãn|sleeve|decal|sticker/i.test(p.name));
-  return (byName ?? usable.find((p) => p.hasImage) ?? usable[0])?.id ?? null;
+const fold = (t: string) =>
+  t.normalize("NFD").replace(/[\u0300-\u036f]/g, "").replace(/đ/g, "d").toLowerCase();
+
+/**
+ * Tìm các vật liệu của mesh có tên (hoặc nhóm cha có tên) trùng `name`.
+ * Nếu không có, đoán theo `fallback` (ví dụ nhãn: label / nhan / sleeve). Trả về chỉ số vật liệu.
+ */
+export function findPartIds(store: PartStore, name: string, fallback: RegExp): number[] {
+  const want = fold(name);
+  const pick = (test: (chain: string[]) => boolean) => {
+    const ids = new Set<number>();
+    for (const e of store.meshes) if (test(e.chain)) ids.add(store.mats.indexOf(e.mat));
+    return [...ids].filter((i) => i >= 0);
+  };
+  const exact = pick((c) => c.some((n) => fold(n) === want));
+  return exact.length ? exact : pick((c) => c.some((n) => fallback.test(fold(n))));
 }
 
 /* ---------- màu ---------- */
@@ -259,7 +262,9 @@ export const densityFactor = (t: number) => Math.exp(Math.log(2.5) + (Math.log(0
  * Đổi màu nước thật (không loang): chỉ đổi attenuationColor, color (phủ lớp mặt theo tint),
  * và attenuationDistance. Không đụng tới thickness / ior, không đặt needsUpdate.
  */
-export function applyWater(store: PartStore, hex: string, density: number) {
+export type WaterParams = { tint: number; turbidity: number };
+
+export function applyWater(store: PartStore, hex: string, density: number, params: WaterParams) {
   const k = (clamp01(density) - 0.5) * 2;
   const factor = densityFactor(density);
   const target = parseHex(hex);
@@ -268,8 +273,8 @@ export function applyWater(store: PartStore, hex: string, density: number) {
     const orig = store.originals.get(m);
     m.attenuationColor?.set(deepenColor(hex, k));
     if (m.color) {
-      const tint = clamp01(num(m.userData.rvTint, 0.35));
-      const turbidity = clamp01(num(m.userData.rvTurbidity, 0));
+      const tint = clamp01(params.tint);
+      const turbidity = clamp01(params.turbidity);
       let c = mix([255, 255, 255], target, tint);
       if (turbidity > 0) c = mix(c, [target[0] * 0.35, target[1] * 0.35, target[2] * 0.35], turbidity * 0.5);
       m.color.set(toHex(c[0], c[1], c[2]));
@@ -277,10 +282,6 @@ export function applyWater(store: PartStore, hex: string, density: number) {
     const base = orig?.attenuationDistance;
     if (typeof base === "number" && Number.isFinite(base)) m.attenuationDistance = base * factor;
   }
-}
-
-function num(v: unknown, fallback: number): number {
-  return typeof v === "number" && Number.isFinite(v) ? v : fallback;
 }
 
 export function resetWater(store: PartStore) {
@@ -327,7 +328,7 @@ export async function prepareImage(file: File): Promise<HTMLCanvasElement> {
 /**
  * Thay ảnh lên một bộ phận. Nếu đã có map gốc: clone để giữ nguyên UV/transform/flipY/colorSpace/kênh UV,
  * nhưng tạo Source mới (clone dùng chung Source với bản gốc, đặt .image sẽ ghi đè luôn ảnh gốc).
- * Nếu chưa có map: tạo Texture mới từ lớp Texture của chính viewer (lấy qua scene.environment).
+ * Nếu chưa có map: tạo Texture mới từ lớp Texture mà viewer.js xuất ra (MaterialViewer.Texture).
  */
 export function replaceImage(v: Viewer, store: PartStore, id: number, canvas: HTMLCanvasElement): boolean {
   const m = store.mats[id];
@@ -341,7 +342,7 @@ export function replaceImage(v: Viewer, store: PartStore, id: number, canvas: HT
     tex.source = new Source(canvas) as Tex["source"];
     tex.flipY = orig.map.flipY;
   } else {
-    const TexClass = v.scene.environment?.constructor;
+    const TexClass = window.MaterialViewer?.Texture ?? v.scene.environment?.constructor;
     if (!TexClass) return false;
     tex = new TexClass(canvas);
     tex.flipY = false;

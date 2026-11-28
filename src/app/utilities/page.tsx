@@ -64,8 +64,8 @@ const tools = [
   {
     href: "/utilities/3d-studio/",
     name: "3D Studio",
-    description: "Tải mô hình 3D (GLB) lên, xoay xem, đổi màu từng bộ phận, thay ảnh nhãn và xuất ảnh PNG.",
-    tags: ["Tải mô hình GLB", "Đổi màu · thay nhãn", "Xuất PNG"],
+    description: "Chọn mẫu chai 3D, xoay xem, đổi màu nước và nắp, thay ảnh nhãn rồi tải ảnh PNG.",
+    tags: ["Chọn loại chai", "Đổi màu · thay nhãn", "Tải PNG"],
     Icon: CubeIcon,
   },
 ];

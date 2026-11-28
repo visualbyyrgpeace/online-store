@@ -1,0 +1,68 @@
+{
+  "app": "material-studio",
+  "version": 2,
+  "scene": {
+    "env": "hdri",
+    "envGain": 1,
+    "exposure": 1,
+    "tone": "Neutral",
+    "bgMode": "color",
+    "bg": "#e9e9ec",
+    "backdrop": "none",
+    "autoRotate": false,
+    "wire": false,
+    "hdriBg": false
+  },
+  "camera": {
+    "position": [
+      -0.003950006167215602,
+      0.2773787963130075,
+      0.2970257617585902
+    ],
+    "target": [
+      0,
+      0.07940792790625965,
+      0
+    ],
+    "fov": 30
+  },
+  "materials": [
+    {
+      "name": "Nhựa 1",
+      "kind": "plastic",
+      "params": {
+        "color": "#ffffff",
+        "roughness": 0.05,
+        "clearcoat": 0,
+        "clearcoatRoughness": 0.08,
+        "specular": 1,
+        "ior": 1.575,
+        "sheen": 0,
+        "transmission": 1,
+        "thickness": 0.03,
+        "absorb": 0,
+        "opacity": 1,
+        "double": true
+      }
+    },
+    {
+      "name": "Nước 1",
+      "kind": "water",
+      "params": {
+        "color": "#8fd0ff",
+        "tint": 0.35,
+        "absorb": 0.5,
+        "thickness": 0.7,
+        "ior": 1.333,
+        "roughness": 0.02,
+        "specular": 1,
+        "double": true,
+        "turbidity": 0,
+        "deepSat": 0,
+        "surface": 0,
+        "chord": 0,
+        "bend": 1
+      }
+    }
+  ]
+}
