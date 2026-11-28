@@ -9,6 +9,9 @@ export const VIEWER_SRC = `${BASE}/3d-studio/viewer.js`;
 
 export const MAX_TEXTURE_PX = 2048;
 
+/** Cạnh dài tối đa (px) của khung vẽ khi siêu lấy mẫu lúc xuất ảnh. */
+const SUPERSAMPLE_MAX_PX = 4096;
+
 /* ---------- kiểu tối thiểu của các đối tượng Three mà viewer trả về ---------- */
 
 type Vec = { x: number; y: number; z: number; set(x: number, y: number, z: number): unknown };
@@ -64,6 +67,8 @@ export type Viewer = {
   camera: { position: Vec; aspect: number; updateProjectionMatrix(): void };
   controls: { autoRotate: boolean; target: Vec; update(): void };
   root: Obj;
+  /** "high" = siêu lấy mẫu (mặc định), "light" = nhẹ cho máy yếu. Có từ bản viewer.js mới. */
+  setQuality?(q: "high" | "light"): void;
   dispose(): void;
 };
 type MountFn = (
@@ -488,13 +493,19 @@ export async function renderToBlob(
     throw new Error(`Thiết bị này chỉ xuất được tối đa ${max}px. Hãy chọn kích thước nhỏ hơn.`);
   }
 
+  // Siêu lấy mẫu 2x rồi thu nhỏ: cạnh kính, vệt sáng và chữ trên nhãn mịn hơn hẳn MSAA đơn thuần.
+  // Chỉ bật khi thiết bị đủ sức (cạnh dài x2 không vượt SUPERSAMPLE_MAX_PX).
+  const ss = longEdge * 2 <= Math.min(max, SUPERSAMPLE_MAX_PX) ? 2 : 1;
+  const RW = W * ss;
+  const RH = H * ss;
+
   const { renderer, scene, camera } = v;
   const prevRatio = renderer.getPixelRatio();
   const prevBg = scene.background;
   let pending: Promise<Blob | null>;
   try {
     renderer.setPixelRatio(1);
-    renderer.setSize(W, H, false);
+    renderer.setSize(RW, RH, false);
     camera.aspect = W / H;
     camera.updateProjectionMatrix();
     if (transparent || !bgVisible) {
@@ -505,7 +516,21 @@ export async function renderToBlob(
       renderer.setClearColor(bgColor, 1);
     }
     renderer.render(scene, camera);
-    pending = new Promise<Blob | null>((resolve) => renderer.domElement.toBlob(resolve, "image/png"));
+    // Không có preserveDrawingBuffer: phải sao chép khung vẽ ngay trong cùng tác vụ với render.
+    let source: HTMLCanvasElement = renderer.domElement;
+    if (ss > 1) {
+      const down = document.createElement("canvas");
+      down.width = W;
+      down.height = H;
+      const ctx = down.getContext("2d");
+      if (ctx) {
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
+        ctx.drawImage(renderer.domElement, 0, 0, W, H);
+        source = down;
+      }
+    }
+    pending = new Promise<Blob | null>((resolve) => source.toBlob(resolve, "image/png"));
   } finally {
     renderer.setPixelRatio(prevRatio);
     renderer.setSize(cw, ch, false);

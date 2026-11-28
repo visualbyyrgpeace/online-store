@@ -242,6 +242,7 @@ export function Studio3DUtility() {
   const [bgTransparent, setBgTransparent] = useState(false);
   const [exposure, setExposure] = useState(1);
   const [autoRotate, setAutoRotate] = useState(false);
+  const [lite, setLite] = useState(false);
 
   const [exportSize, setExportSize] = useState<number>(2048);
   const [exportTransparent, setExportTransparent] = useState(false);
@@ -249,10 +250,10 @@ export function Studio3DUtility() {
   const [sizeLimit, setSizeLimit] = useState(Infinity);
 
   // Giá trị mới nhất cho các hàm async (tránh đóng băng state cũ).
-  const settings = useRef({ bgHex, bgTransparent, exposure, autoRotate, adjust });
+  const settings = useRef({ bgHex, bgTransparent, exposure, autoRotate, adjust, lite });
   useEffect(() => {
-    settings.current = { bgHex, bgTransparent, exposure, autoRotate, adjust };
-  }, [bgHex, bgTransparent, exposure, autoRotate, adjust]);
+    settings.current = { bgHex, bgTransparent, exposure, autoRotate, adjust, lite };
+  }, [bgHex, bgTransparent, exposure, autoRotate, adjust, lite]);
 
   const canCopy = typeof ClipboardItem !== "undefined" && !!navigator.clipboard?.write;
   const say = useCallback((msg: string) => setNotice(msg), []);
@@ -362,6 +363,7 @@ export function Studio3DUtility() {
         applyBackground(s.bgHex, s.bgTransparent);
         v.renderer.toneMappingExposure = s.exposure;
         v.controls.autoRotate = s.autoRotate;
+        if (s.lite) v.setQuality?.("light");
         const canvas = labelCanvasRef.current;
         if (canvas && labelIdsRef.current.length) {
           for (const id of labelIdsRef.current) {
@@ -512,6 +514,11 @@ export function Studio3DUtility() {
   const changeTransparent = (on: boolean) => {
     setBgTransparent(on);
     applyBackground(bgHex, on);
+  };
+
+  const changeLite = (on: boolean) => {
+    setLite(on);
+    viewerRef.current?.setQuality?.(on ? "light" : "high");
   };
 
   const changeExposure = (value: number) => {
@@ -814,6 +821,10 @@ export function Studio3DUtility() {
                 <label className="flex items-center gap-2.5 text-sm text-slate-700">
                   <input type="checkbox" checked={bgTransparent} onChange={(e) => changeTransparent(e.target.checked)} className="h-4 w-4 accent-black" />
                   Nền trong suốt
+                </label>
+                <label className="flex items-center gap-2.5 text-sm text-slate-700" title="Giảm độ nét khi xem để mượt hơn trên máy yếu. Ảnh tải về vẫn giữ chất lượng cao.">
+                  <input type="checkbox" checked={lite} onChange={(e) => changeLite(e.target.checked)} className="h-4 w-4 accent-black" />
+                  Chế độ nhẹ (máy yếu)
                 </label>
                 <Slider label="Độ sáng" value={exposure} min={0.6} max={1.6} step={0.01} display={`${Math.round(exposure * 100)}%`} onChange={changeExposure} />
               </Section>
